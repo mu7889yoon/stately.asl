@@ -1,0 +1,10 @@
+{
+  "name": "@stately/examples",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "echo examples: no build",
+    "dev": "echo examples: no dev"
+  }
+}

@@ -1,0 +1,91 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`transpile ddb-batch > produces Parallel/Map/Catch-like 1`] = `
+{
+  "StartAt": "Map_1",
+  "States": {
+    "Map_1": {
+      "ItemsPath": "$.items",
+      "Iterator": {
+        "StartAt": "putItem_2",
+        "States": {
+          "putItem_2": {
+            "End": true,
+            "Parameters": {},
+            "Resource": "arn:aws:states:::aws-sdk:dynamodb:putItem",
+            "ResultPath": "$.putItem_2Result",
+            "Retry": [
+              {
+                "BackoffRate": 2,
+                "ErrorEquals": [
+                  "States.ALL",
+                ],
+                "IntervalSeconds": 2,
+                "MaxAttempts": 3,
+              },
+            ],
+            "Type": "Task",
+          },
+        },
+      },
+      "Next": "putItem_3",
+      "Type": "Map",
+    },
+    "putItem_3": {
+      "Next": "putItem_4",
+      "Parameters": {},
+      "Resource": "arn:aws:states:::aws-sdk:dynamodb:putItem",
+      "ResultPath": "$.putItem_3Result",
+      "Retry": [
+        {
+          "BackoffRate": 2,
+          "ErrorEquals": [
+            "States.ALL",
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+        },
+      ],
+      "Type": "Task",
+    },
+    "putItem_4": {
+      "Next": "putItem_5",
+      "Parameters": {
+        "Item.$": "$.Item",
+      },
+      "Resource": "arn:aws:states:::aws-sdk:dynamodb:putItem",
+      "ResultPath": "$.putItem_4Result",
+      "Retry": [
+        {
+          "BackoffRate": 2,
+          "ErrorEquals": [
+            "States.ALL",
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+        },
+      ],
+      "Type": "Task",
+    },
+    "putItem_5": {
+      "End": true,
+      "Parameters": {
+        "Item.$": "$.Item",
+      },
+      "Resource": "arn:aws:states:::aws-sdk:dynamodb:putItem",
+      "ResultPath": "$.putItem_5Result",
+      "Retry": [
+        {
+          "BackoffRate": 2,
+          "ErrorEquals": [
+            "States.ALL",
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+        },
+      ],
+      "Type": "Task",
+    },
+  },
+}
+`;
