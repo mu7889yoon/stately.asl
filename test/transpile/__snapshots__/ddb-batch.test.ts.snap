@@ -7,13 +7,16 @@ exports[`transpile ddb-batch > produces Parallel/Map/Catch-like 1`] = `
     "Map_1": {
       "ItemsPath": "$.items",
       "Iterator": {
-        "StartAt": "putItem_2",
+        "StartAt": "putItem_1",
         "States": {
-          "putItem_2": {
+          "putItem_1": {
             "End": true,
-            "Parameters": {},
+            "Parameters": {
+              "Item.$": "$.Item",
+              "TableName.$": "$.TableName",
+            },
             "Resource": "arn:aws:states:::aws-sdk:dynamodb:putItem",
-            "ResultPath": "$.putItem_2Result",
+            "ResultPath": "$.putItem_1Result",
             "Retry": [
               {
                 "BackoffRate": 2,
@@ -29,51 +32,17 @@ exports[`transpile ddb-batch > produces Parallel/Map/Catch-like 1`] = `
         },
       },
       "Next": "putItem_3",
+      "ResultPath": undefined,
       "Type": "Map",
     },
     "putItem_3": {
-      "Next": "putItem_4",
-      "Parameters": {},
-      "Resource": "arn:aws:states:::aws-sdk:dynamodb:putItem",
-      "ResultPath": "$.putItem_3Result",
-      "Retry": [
-        {
-          "BackoffRate": 2,
-          "ErrorEquals": [
-            "States.ALL",
-          ],
-          "IntervalSeconds": 2,
-          "MaxAttempts": 3,
-        },
-      ],
-      "Type": "Task",
-    },
-    "putItem_4": {
-      "Next": "putItem_5",
-      "Parameters": {
-        "Item.$": "$.Item",
-      },
-      "Resource": "arn:aws:states:::aws-sdk:dynamodb:putItem",
-      "ResultPath": "$.putItem_4Result",
-      "Retry": [
-        {
-          "BackoffRate": 2,
-          "ErrorEquals": [
-            "States.ALL",
-          ],
-          "IntervalSeconds": 2,
-          "MaxAttempts": 3,
-        },
-      ],
-      "Type": "Task",
-    },
-    "putItem_5": {
       "End": true,
       "Parameters": {
-        "Item.$": "$.Item",
+        "Item.$": "$.items[0]",
+        "TableName.$": "$.TableName",
       },
       "Resource": "arn:aws:states:::aws-sdk:dynamodb:putItem",
-      "ResultPath": "$.putItem_5Result",
+      "ResultPath": "$.putItem_3Result",
       "Retry": [
         {
           "BackoffRate": 2,

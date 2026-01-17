@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { transpile } from "@stately/core";
+import { transpile } from "../../dist/index.js";
 
 describe("transpile ddb-batch", () => {
   it("produces Parallel/Map/Catch-like", async () => {
@@ -8,4 +8,3 @@ describe("transpile ddb-batch", () => {
     expect(asl.StartAt).toBeTruthy();
   });
 });
-

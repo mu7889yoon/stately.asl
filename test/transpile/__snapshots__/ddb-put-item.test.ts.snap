@@ -6,7 +6,10 @@ exports[`transpile ddb-put-item > produces ASL Task for PutItem 1`] = `
   "States": {
     "putItem_1": {
       "End": true,
-      "Parameters": {},
+      "Parameters": {
+        "Item.$": "$.Item",
+        "TableName.$": "$.TableName",
+      },
       "Resource": "arn:aws:states:::aws-sdk:dynamodb:putItem",
       "ResultPath": "$.putItem_1Result",
       "Retry": [

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { transpile } from "@stately/core";
+import { transpile } from "../../dist/index.js";
 
 describe("transpile ddb-put-item", () => {
   it("produces ASL Task for PutItem", async () => {
@@ -11,4 +11,3 @@ describe("transpile ddb-put-item", () => {
     expect(first.Resource).toContain("dynamodb:putItem");
   });
 });
-
