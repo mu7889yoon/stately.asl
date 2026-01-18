@@ -372,26 +372,9 @@ export interface ServicePlugin {
   /** Client class names this plugin handles (e.g., ["DynamoDBClient"]) */
   clientNames: string[];
 
-  /** Map of SDK command name to ASL operation info */
-  operations: Record<string, OperationMapping>;
+  /** Exception overrides: CommandName → aslOperation (optional) */
+  overrides?: Record<string, string>;
 }
-
-export interface OperationMapping {
-  /** ASL operation name (e.g., "putItem") */
-  aslOperation: string;
-
-  /** Parameter transformations */
-  paramTransforms?: Record<string, ParamTransform>;
-
-  /** Default retry config */
-  retry?: RetryConfig[];
-}
-
-export type ParamTransform =
-  | { type: "direct" } // Use parameter as-is
-  | { type: "jsonPath"; path: string } // Transform to JSONPath reference
-  | { type: "rename"; to: string } // Rename parameter
-  | { type: "nested"; transforms: Record<string, ParamTransform> }; // Nested object
 
 // ============================================================================
 // Transpiler Options

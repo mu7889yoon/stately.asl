@@ -1,4 +1,4 @@
-export { PluginRegistry, defaultRetry, defaultCatch, buildSdkArn } from "./interface.js";
+export { PluginRegistry, buildSdkArn, deriveAslOperation } from "./interface.js";
 export { dynamodbPlugin } from "./dynamodb.js";
 export { s3Plugin } from "./s3.js";
 export { sqsPlugin } from "./sqs.js";

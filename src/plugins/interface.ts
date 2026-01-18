@@ -1,27 +1,20 @@
-import type { ServicePlugin, RetryConfig } from "../types.js";
+import type { ServicePlugin } from "../types.js";
 
 /**
- * Default retry configuration for AWS SDK integrations
+ * Derives ASL operation name from SDK command name.
+ * Removes "Command" suffix and converts PascalCase to camelCase.
+ *
+ * @example
+ * deriveAslOperation("PutItemCommand") // "putItem"
+ * deriveAslOperation("ScanCommand") // "scan"
+ * deriveAslOperation("BatchWriteItemCommand") // "batchWriteItem"
  */
-export const defaultRetry: RetryConfig[] = [
-  {
-    ErrorEquals: ["States.ALL"],
-    IntervalSeconds: 2,
-    MaxAttempts: 3,
-    BackoffRate: 2,
-  },
-];
-
-/**
- * Default catch configuration for error handling
- */
-export const defaultCatch = [
-  {
-    ErrorEquals: ["States.ALL"],
-    ResultPath: "$.error",
-    Next: "__ErrorHandled__",
-  },
-];
+export function deriveAslOperation(commandName: string): string {
+  const withoutSuffix = commandName.endsWith("Command")
+    ? commandName.slice(0, -7)
+    : commandName;
+  return withoutSuffix.charAt(0).toLowerCase() + withoutSuffix.slice(1);
+}
 
 /**
  * Builds an AWS SDK integration ARN for Step Functions

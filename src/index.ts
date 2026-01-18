@@ -55,8 +55,6 @@ export type {
 
   // Plugin types
   ServicePlugin,
-  OperationMapping,
-  ParamTransform,
 
   // Options
   TranspileOptions,
@@ -68,9 +66,8 @@ export {
   PluginRegistry,
   defaultRegistry,
   createDefaultRegistry,
-  defaultRetry,
-  defaultCatch,
   buildSdkArn,
+  deriveAslOperation,
   dynamodbPlugin,
   s3Plugin,
   sqsPlugin,

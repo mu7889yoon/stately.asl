@@ -16,10 +16,8 @@ import type {
   IRFail,
   IRWait,
   JsonExpr,
-  RetryConfig,
   CatchConfig,
 } from "../types.js";
-import { defaultRetry } from "../plugins/index.js";
 
 /**
  * Check if an IR state can have a "next" property
@@ -56,7 +54,6 @@ class IdGenerator {
  */
 interface IRBuildContext {
   idGen: IdGenerator;
-  includeRetry: boolean;
 }
 
 /**
@@ -108,7 +105,7 @@ function paramsToJsonPath(params: Record<string, unknown>): JsonExpr {
 function taskToIR(task: CFGTask, ctx: IRBuildContext): IRTask {
   const id = ctx.idGen.generate(task.operation);
 
-  const irTask: IRTask = {
+  return {
     kind: "Task",
     id,
     service: task.service,
@@ -116,12 +113,6 @@ function taskToIR(task: CFGTask, ctx: IRBuildContext): IRTask {
     params: paramsToJsonPath(task.params),
     resultPath: `$.${id}Result`,
   };
-
-  if (ctx.includeRetry) {
-    irTask.retry = defaultRetry;
-  }
-
-  return irTask;
 }
 
 /**
@@ -349,7 +340,6 @@ export function sequenceToIR(
 ): IR {
   const context: IRBuildContext = ctx ?? {
     idGen: new IdGenerator(),
-    includeRetry: true,
   };
 
   const states: Record<string, IRState> = existingStates ?? {};
@@ -382,7 +372,6 @@ export function sequenceToIR(
     const tempStates: Record<string, IRState> = {};
     const tempCtx: IRBuildContext = {
       idGen: new IdGenerator(),
-      includeRetry: context.includeRetry,
     };
     const ids = nodeToIR(node, tempCtx, tempStates);
 
@@ -444,16 +433,15 @@ export function sequenceToIR(
  * Build IR options
  */
 export interface BuildIROptions {
-  includeRetry?: boolean;
+  // Reserved for future options
 }
 
 /**
  * Build IR from CFG
  */
-export function buildIR(cfg: CFGSequence, options?: BuildIROptions): IR {
+export function buildIR(cfg: CFGSequence, _options?: BuildIROptions): IR {
   const ctx: IRBuildContext = {
     idGen: new IdGenerator(),
-    includeRetry: options?.includeRetry ?? true,
   };
 
   return sequenceToIR(cfg, ctx);

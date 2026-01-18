@@ -16,7 +16,7 @@ import {
   Expression,
 } from "ts-morph";
 import type { Diagnostic } from "../types.js";
-import { PluginRegistry } from "../plugins/index.js";
+import { PluginRegistry, deriveAslOperation } from "../plugins/index.js";
 
 export interface DetectorMetrics {
   promiseAll: number;
@@ -90,6 +90,54 @@ function extractArrayParams(arr: ArrayLiteralExpression): unknown[] {
 }
 
 /**
+ * Extracts service name from AWS SDK module specifier.
+ * @example
+ * extractServiceFromModule("@aws-sdk/client-dynamodb") // "dynamodb"
+ * extractServiceFromModule("@aws-sdk/client-s3") // "s3"
+ */
+function extractServiceFromModule(moduleSpecifier: string): string | undefined {
+  const match = moduleSpecifier.match(/^@aws-sdk\/client-(.+)$/);
+  return match ? match[1] : undefined;
+}
+
+/**
+ * Builds a map of command names to service names by analyzing imports.
+ * Caches the result per source file.
+ */
+const commandToServiceCache = new WeakMap<SourceFile, Map<string, string>>();
+
+function buildCommandToServiceMap(sf: SourceFile): Map<string, string> {
+  const cached = commandToServiceCache.get(sf);
+  if (cached) {
+    return cached;
+  }
+
+  const map = new Map<string, string>();
+
+  for (const importDecl of sf.getImportDeclarations()) {
+    const moduleSpecifier = importDecl.getModuleSpecifierValue();
+    const serviceName = extractServiceFromModule(moduleSpecifier);
+
+    if (!serviceName) {
+      continue;
+    }
+
+    // Get named imports
+    const namedImports = importDecl.getNamedImports();
+    for (const namedImport of namedImports) {
+      const name = namedImport.getName();
+      // Only map Command classes
+      if (name.endsWith("Command")) {
+        map.set(name, serviceName);
+      }
+    }
+  }
+
+  commandToServiceCache.set(sf, map);
+  return map;
+}
+
+/**
  * Parses a client.send(new XxxCommand({...})) call
  */
 export function parseSdkCall(
@@ -122,24 +170,35 @@ export function parseSdkCall(
   const commandExpr = newExpr.getExpression();
   const commandName = commandExpr.getText();
 
-  // Find the plugin for this command
-  for (const plugin of registry.getAll()) {
-    const opMapping = plugin.operations[commandName];
-    if (opMapping) {
-      const ctorArgs = newExpr.getArguments();
-      const params = ctorArgs.length > 0 ? extractObjectParams(ctorArgs[0]) : {};
+  // Get the source file and build command-to-service map
+  const sf = call.getSourceFile();
+  const commandToService = buildCommandToServiceMap(sf);
 
-      return {
-        service: plugin.serviceName,
-        operation: opMapping.aslOperation,
-        commandName,
-        params,
-        sourceText: call.getText(),
-      };
-    }
+  // Find the service for this command
+  const serviceName = commandToService.get(commandName);
+  if (!serviceName) {
+    return undefined;
   }
 
-  return undefined;
+  // Find the plugin for this service
+  const plugin = registry.getByService(serviceName);
+  if (!plugin) {
+    return undefined;
+  }
+
+  // Determine the operation: check overrides first, then derive
+  const operation = plugin.overrides?.[commandName] ?? deriveAslOperation(commandName);
+
+  const ctorArgs = newExpr.getArguments();
+  const params = ctorArgs.length > 0 ? extractObjectParams(ctorArgs[0]) : {};
+
+  return {
+    service: plugin.serviceName,
+    operation,
+    commandName,
+    params,
+    sourceText: call.getText(),
+  };
 }
 
 /**

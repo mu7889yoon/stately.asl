@@ -17,16 +17,6 @@ exports[`transpile ddb-batch > produces Parallel/Map/Catch-like 1`] = `
             },
             "Resource": "arn:aws:states:::aws-sdk:dynamodb:putItem",
             "ResultPath": "$.putItem_1Result",
-            "Retry": [
-              {
-                "BackoffRate": 2,
-                "ErrorEquals": [
-                  "States.ALL",
-                ],
-                "IntervalSeconds": 2,
-                "MaxAttempts": 3,
-              },
-            ],
             "Type": "Task",
           },
         },
@@ -43,16 +33,6 @@ exports[`transpile ddb-batch > produces Parallel/Map/Catch-like 1`] = `
       },
       "Resource": "arn:aws:states:::aws-sdk:dynamodb:putItem",
       "ResultPath": "$.putItem_3Result",
-      "Retry": [
-        {
-          "BackoffRate": 2,
-          "ErrorEquals": [
-            "States.ALL",
-          ],
-          "IntervalSeconds": 2,
-          "MaxAttempts": 3,
-        },
-      ],
       "Type": "Task",
     },
   },
