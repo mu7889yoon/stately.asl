@@ -230,6 +230,7 @@ export interface CatchConfig {
 
 export interface ASLStateMachine {
   Comment?: string;
+  QueryLanguage?: "JSONata" | "JSONPath";
   StartAt: string;
   States: Record<string, ASLState>;
   TimeoutSeconds?: number;

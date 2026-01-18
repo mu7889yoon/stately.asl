@@ -3,12 +3,14 @@ export { dynamodbPlugin } from "./dynamodb.js";
 export { s3Plugin } from "./s3.js";
 export { sqsPlugin } from "./sqs.js";
 export { snsPlugin } from "./sns.js";
+export { httpPlugin } from "./http.js";
 
 import { PluginRegistry } from "./interface.js";
 import { dynamodbPlugin } from "./dynamodb.js";
 import { s3Plugin } from "./s3.js";
 import { sqsPlugin } from "./sqs.js";
 import { snsPlugin } from "./sns.js";
+import { httpPlugin } from "./http.js";
 
 /**
  * Creates the default plugin registry with all built-in plugins
@@ -19,6 +21,7 @@ export function createDefaultRegistry(): PluginRegistry {
   registry.register(s3Plugin);
   registry.register(sqsPlugin);
   registry.register(snsPlugin);
+  registry.register(httpPlugin);
   return registry;
 }
 

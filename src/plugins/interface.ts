@@ -20,6 +20,9 @@ export function deriveAslOperation(commandName: string): string {
  * Builds an AWS SDK integration ARN for Step Functions
  */
 export function buildSdkArn(service: string, operation: string): string {
+  if (service === "http" && operation === "invoke") {
+    return "arn:aws:states:::http:invoke";
+  }
   return `arn:aws:states:::aws-sdk:${service}:${operation}`;
 }
 

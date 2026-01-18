@@ -3,7 +3,7 @@ import { transpile } from "../../dist/index.js";
 
 describe("transpile ddb-put-item", () => {
   it("produces ASL Task for PutItem", async () => {
-    const { asl } = await transpile({ entry: "examples/ddb-put-item.ts" });
+    const { asl } = await transpile({ entry: "test/fixtures/ddb-put-item.ts" });
     expect(asl).toMatchSnapshot();
     expect(asl.States).toBeTruthy();
     const first = asl.States[asl.StartAt];

@@ -27,6 +27,7 @@ import {
   getPromiseAllArray,
   parseForOfStatement,
   parseCondition,
+  parseHttpsCall,
 } from "../parser/visitors.js";
 
 /**
@@ -62,6 +63,37 @@ export function extractTaskFromAwait(
     operation: parsed.operation,
     params: parsed.params,
     sourceText: parsed.sourceText,
+  };
+}
+
+/**
+ * Extract a Task from https.get() or https.request() call
+ */
+export function extractHttpTask(
+  call: CallExpression,
+  ctx: CFGBuildContext
+): CFGTask | undefined {
+  const httpInfo = parseHttpsCall(call);
+  if (!httpInfo) {
+    return undefined;
+  }
+
+  const params: Record<string, unknown> = {
+    ApiEndpoint: httpInfo.url,
+    // Quote the method to ensure it's treated as a literal string, not a variable reference
+    Method: `"${httpInfo.method}"`,
+  };
+
+  if (httpInfo.headers) {
+    params.Headers = httpInfo.headers;
+  }
+
+  return {
+    kind: "Task",
+    service: "http",
+    operation: "invoke",
+    params,
+    sourceText: httpInfo.sourceText,
   };
 }
 
@@ -507,6 +539,15 @@ function processExpression(
 
   // Handle direct client.send() without await
   if (Node.isCallExpression(expr)) {
+    // Try HTTP task first (https.get, https.request)
+    const httpTask = extractHttpTask(expr as CallExpression, ctx);
+    if (httpTask) {
+      ctx.visitedNodes.add(expr);
+      seq.nodes.push(httpTask);
+      return;
+    }
+
+    // Try SDK call
     const parsed = parseSdkCall(expr as CallExpression, ctx.registry);
     if (parsed) {
       ctx.visitedNodes.add(expr);

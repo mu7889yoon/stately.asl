@@ -201,6 +201,60 @@ export function parseSdkCall(
   };
 }
 
+export interface ParsedHttpCall {
+  method: string;
+  url: string;
+  headers?: Record<string, unknown>;
+  body?: unknown;
+  sourceText: string;
+}
+
+/**
+ * Parses https.get() or https.request() calls
+ */
+export function parseHttpsCall(call: CallExpression): ParsedHttpCall | undefined {
+  const expr = call.getExpression();
+  if (!Node.isPropertyAccessExpression(expr)) {
+    return undefined;
+  }
+
+  const objText = expr.getExpression().getText();
+  const methodName = expr.getName();
+
+  // https.get() または https.request() を検出
+  if (objText !== "https") {
+    return undefined;
+  }
+  if (methodName !== "get" && methodName !== "request") {
+    return undefined;
+  }
+
+  const args = call.getArguments();
+  if (args.length === 0) {
+    return undefined;
+  }
+
+  // 第1引数: URL
+  const url = args[0].getText();
+
+  // https.get は GET固定、https.request はオプションから取得
+  let method = "GET";
+  let headers: Record<string, unknown> | undefined;
+
+  // オプション引数の解析 (https.request の場合)
+  if (args.length > 1 && Node.isObjectLiteralExpression(args[1])) {
+    const opts = extractObjectParams(args[1]);
+    if (opts.method) {
+      method = String(opts.method).replace(/['"]/g, "").toUpperCase();
+    }
+    if (opts.headers) {
+      headers = opts.headers as Record<string, unknown>;
+    }
+  }
+
+  return { method, url, headers, sourceText: call.getText() };
+}
+
 /**
  * Checks if a call expression is Promise.all
  */
@@ -343,10 +397,6 @@ const FORBIDDEN_MODULES = new Set([
   "fs/promises",
   "node:fs/promises",
   "axios",
-  "http",
-  "https",
-  "node:http",
-  "node:https",
   "child_process",
   "node:child_process",
   "net",

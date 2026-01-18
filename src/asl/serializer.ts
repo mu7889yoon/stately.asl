@@ -340,6 +340,7 @@ export function serializeToAsl(ir: IR): ASLStateMachine {
   }
 
   return {
+    QueryLanguage: "JSONata",
     StartAt: ir.startAt,
     States: states,
   };

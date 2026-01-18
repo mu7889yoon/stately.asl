@@ -2,11 +2,13 @@
 
 exports[`transpile ddb-batch > produces Parallel/Map/Catch-like 1`] = `
 {
+  "QueryLanguage": "JSONata",
   "StartAt": "Map_1",
   "States": {
     "Map_1": {
       "ItemsPath": "$.items",
       "Iterator": {
+        "QueryLanguage": "JSONata",
         "StartAt": "putItem_1",
         "States": {
           "putItem_1": {
