@@ -1,0 +1,42 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`transpile ddb-batch > produces Parallel/Map/Catch-like 1`] = `
+{
+  "QueryLanguage": "JSONata",
+  "StartAt": "Map_1",
+  "States": {
+    "Map_1": {
+      "ItemsPath": "$.items",
+      "Iterator": {
+        "QueryLanguage": "JSONata",
+        "StartAt": "putItem_1",
+        "States": {
+          "putItem_1": {
+            "End": true,
+            "Parameters": {
+              "Item.$": "$.Item",
+              "TableName.$": "$.TableName",
+            },
+            "Resource": "arn:aws:states:::aws-sdk:dynamodb:putItem",
+            "ResultPath": "$.putItem_1Result",
+            "Type": "Task",
+          },
+        },
+      },
+      "Next": "putItem_3",
+      "ResultPath": undefined,
+      "Type": "Map",
+    },
+    "putItem_3": {
+      "End": true,
+      "Parameters": {
+        "Item.$": "$.items[0]",
+        "TableName.$": "$.TableName",
+      },
+      "Resource": "arn:aws:states:::aws-sdk:dynamodb:putItem",
+      "ResultPath": "$.putItem_3Result",
+      "Type": "Task",
+    },
+  },
+}
+`;

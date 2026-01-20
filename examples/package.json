@@ -1,0 +1,5 @@
+{
+  "name": "@stately/examples",
+  "private": true,
+  "type": "module"
+}
