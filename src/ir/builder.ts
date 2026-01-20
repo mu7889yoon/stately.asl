@@ -215,13 +215,12 @@ function choiceToIR(
   }
 
   // Process else branch (if exists)
-  let elseStartAt: string | undefined;
+  let elseIR: IR | undefined;
   if (choice.elseBranch && choice.elseBranch.nodes.length > 0) {
-    const elseIR = sequenceToIR(choice.elseBranch, ctx);
+    elseIR = sequenceToIR(choice.elseBranch, ctx);
     for (const [stateId, state] of Object.entries(elseIR.states)) {
       states[stateId] = state;
     }
-    elseStartAt = elseIR.startAt;
   }
 
   // Create the Choice state
@@ -234,15 +233,14 @@ function choiceToIR(
         next: thenIR.startAt,
       },
     ],
-    default: elseStartAt,
+    default: elseIR?.startAt,
   };
 
   states[id] = irChoice;
 
   // Collect all state IDs
   const allIds = [id, ...Object.keys(thenIR.states)];
-  if (choice.elseBranch && choice.elseBranch.nodes.length > 0) {
-    const elseIR = sequenceToIR(choice.elseBranch, ctx);
+  if (elseIR) {
     allIds.push(...Object.keys(elseIR.states));
   }
 

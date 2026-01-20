@@ -2,7 +2,7 @@ import { Node, FunctionDeclaration, ArrowFunction, Block, SourceFile } from "ts-
 import type { CFGSequence } from "../types.js";
 import { PluginRegistry, defaultRegistry } from "../plugins/index.js";
 import { parseFile, findTargetFunction } from "../parser/index.js";
-import { processStatement, CFGBuildContext } from "./patterns.js";
+import { processStatement, extractTaskFromAwait, CFGBuildContext } from "./patterns.js";
 
 export { processStatement, extractTaskFromAwait, extractParallel, extractMap, extractTry, extractChoice } from "./patterns.js";
 
@@ -27,7 +27,10 @@ export function buildCFG(options: BuildCFGOptions): BuildCFGResult {
   const targetFn = findTargetFunction(sourceFile, functionName);
 
   if (!targetFn) {
-    throw new Error(`No target function found in ${entry}`);
+    throw new Error(
+      `No target function found in ${entry}. ` +
+      `Specify a function name with --function or export an async function.`
+    );
   }
 
   const body = getBody(targetFn);
@@ -49,11 +52,8 @@ export function buildCFG(options: BuildCFGOptions): BuildCFGResult {
     }
   } else {
     // Arrow function with expression body
-    // Wrap in a pseudo-statement context
-    const expr = body;
-    if (Node.isAwaitExpression(expr)) {
-      const { extractTaskFromAwait } = require("./patterns.js");
-      const task = extractTaskFromAwait(expr, ctx);
+    if (Node.isAwaitExpression(body)) {
+      const task = extractTaskFromAwait(body, ctx);
       if (task) {
         cfg.nodes.push(task);
       }

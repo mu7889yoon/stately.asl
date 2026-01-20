@@ -11,7 +11,6 @@ import {
   ArrayLiteralExpression,
 } from "ts-morph";
 import type {
-  CFGNode,
   CFGSequence,
   CFGTask,
   CFGParallel,
@@ -19,6 +18,7 @@ import type {
   CFGTry,
   CFGChoice,
   ChoiceCondition,
+  ChoiceOperator,
 } from "../types.js";
 import { PluginRegistry } from "../plugins/index.js";
 import {
@@ -360,7 +360,7 @@ export function extractChoice(
 
   const condition: ChoiceCondition = {
     variable: parsedCond.variable,
-    operator: parsedCond.operator as any,
+    operator: parsedCond.operator as ChoiceOperator,
     value: parsedCond.value,
   };
 
