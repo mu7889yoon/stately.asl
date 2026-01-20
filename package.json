@@ -5,9 +5,7 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "bin": {
-    "stately": "dist/cli.js"
-  },
+  "bin": "dist/cli.js",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
