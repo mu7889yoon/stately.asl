@@ -1,6 +1,6 @@
 import https from "https";
 
-export async function handler(apiUrl: string, data: { userId: string }) {
+export async function handler(apiUrl: string, _data: { userId: string }) {
   https.request(apiUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

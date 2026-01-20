@@ -16,7 +16,6 @@ import type {
   IRFail,
   IRWait,
   JsonExpr,
-  CatchConfig,
 } from "../types.js";
 
 /**
@@ -431,7 +430,7 @@ export function sequenceToIR(
  * Build IR options
  */
 export interface BuildIROptions {
-  // Reserved for future options
+  includeRetry?: boolean;
 }
 
 /**

@@ -6,9 +6,7 @@ import {
   TryStatement,
   IfStatement,
   Statement,
-  Block,
   Expression,
-  ArrayLiteralExpression,
 } from "ts-morph";
 import type {
   CFGSequence,
@@ -71,7 +69,7 @@ export function extractTaskFromAwait(
  */
 export function extractHttpTask(
   call: CallExpression,
-  ctx: CFGBuildContext
+  _ctx: CFGBuildContext
 ): CFGTask | undefined {
   const httpInfo = parseHttpsCall(call);
   if (!httpInfo) {
@@ -189,9 +187,9 @@ export function extractParallelFromMap(
     return undefined;
   }
 
-  // Get the array being mapped
+  // Get the array being mapped (reserved for future Map state support)
   const arrayExpr = mapExpr.getExpression();
-  const itemsPath = `$.${arrayExpr.getText()}`;
+  const _itemsPath = `$.${arrayExpr.getText()}`;
 
   // Get the map callback
   const mapArgs = mapCall.getArguments();
@@ -201,19 +199,10 @@ export function extractParallelFromMap(
 
   const callback = mapArgs[0];
   let callbackBody: Node | undefined;
-  let paramName: string | undefined;
 
   if (Node.isArrowFunction(callback)) {
-    const params = callback.getParameters();
-    if (params.length > 0) {
-      paramName = params[0].getName();
-    }
     callbackBody = callback.getBody();
   } else if (Node.isFunctionExpression(callback)) {
-    const params = callback.getParameters();
-    if (params.length > 0) {
-      paramName = params[0].getName();
-    }
     callbackBody = callback.getBody();
   }
 

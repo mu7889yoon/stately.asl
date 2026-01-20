@@ -4,15 +4,12 @@ import {
   NewExpression,
   ObjectLiteralExpression,
   PropertyAssignment,
-  AwaitExpression,
   ArrayLiteralExpression,
   ForOfStatement,
   TryStatement,
-  IfStatement,
   FunctionDeclaration,
   ArrowFunction,
   SourceFile,
-  SyntaxKind,
   Expression,
 } from "ts-morph";
 import type { Diagnostic } from "../types.js";

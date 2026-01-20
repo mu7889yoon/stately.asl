@@ -1,6 +1,6 @@
 import { DynamoDBClient, PutItemCommand } from "@aws-sdk/client-dynamodb";
 
-export async function handler(TableName: string, items: Record<string, any>[]) {
+export async function handler(TableName: string, items: Record<string, unknown>[]) {
   const ddb = new DynamoDBClient({});
   // Parallel: Promise.all
   await Promise.all(
@@ -15,7 +15,7 @@ export async function handler(TableName: string, items: Record<string, any>[]) {
   // Try/Catch: Catch相当
   try {
     await ddb.send(new PutItemCommand({ TableName, Item: items[0] }));
-  } catch (e) {
+  } catch {
     return { ok: false };
   }
 
