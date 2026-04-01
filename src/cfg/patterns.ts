@@ -26,6 +26,8 @@ import {
   parseForOfStatement,
   parseCondition,
   parseHttpsCall,
+  parseFetchCall,
+  parseTerminalFetchJsonCall,
 } from "../parser/visitors.js";
 
 /**
@@ -34,6 +36,83 @@ import {
 export interface CFGBuildContext {
   registry: PluginRegistry;
   visitedNodes: Set<Node>;
+}
+
+function buildTaskFromHttpCall(httpInfo: {
+  method: string;
+  url: string;
+  headers?: unknown;
+  body?: unknown;
+  sourceText: string;
+}): CFGTask {
+  const params: Record<string, unknown> = {
+    ApiEndpoint: httpInfo.url,
+    Method: httpInfo.method,
+  };
+
+  if (httpInfo.headers !== undefined) {
+    params.Headers = httpInfo.headers;
+  }
+
+  if (httpInfo.body !== undefined) {
+    params.RequestBody = httpInfo.body;
+  }
+
+  return {
+    kind: "Task",
+    service: "http",
+    operation: "invoke",
+    params,
+    sourceText: httpInfo.sourceText,
+  };
+}
+
+function extractTaskFromCall(
+  call: CallExpression,
+  ctx: CFGBuildContext
+): CFGTask | undefined {
+  const httpInfo = parseHttpsCall(call) ?? parseFetchCall(call);
+  if (httpInfo) {
+    return buildTaskFromHttpCall(httpInfo);
+  }
+
+  const parsed = parseSdkCall(call, ctx.registry);
+  if (!parsed) {
+    return undefined;
+  }
+
+  return {
+    kind: "Task",
+    service: parsed.service,
+    operation: parsed.operation,
+    params: parsed.params,
+    sourceText: parsed.sourceText,
+  };
+}
+
+function extractTerminalFetchJsonTask(
+  expr: Expression
+): CFGTask | undefined {
+  const call =
+    Node.isCallExpression(expr)
+      ? expr
+      : Node.isAwaitExpression(expr) && Node.isCallExpression(expr.getExpression())
+        ? (expr.getExpression() as CallExpression)
+        : undefined;
+
+  if (!call) {
+    return undefined;
+  }
+
+  const httpInfo = parseTerminalFetchJsonCall(call);
+  if (!httpInfo) {
+    return undefined;
+  }
+
+  const task = buildTaskFromHttpCall(httpInfo);
+  task.resultPath = null;
+  task.outputPath = "$.ResponseBody";
+  return task;
 }
 
 /**
@@ -48,20 +127,7 @@ export function extractTaskFromAwait(
     return undefined;
   }
 
-  const call = inner as CallExpression;
-  const parsed = parseSdkCall(call, ctx.registry);
-
-  if (!parsed) {
-    return undefined;
-  }
-
-  return {
-    kind: "Task",
-    service: parsed.service,
-    operation: parsed.operation,
-    params: parsed.params,
-    sourceText: parsed.sourceText,
-  };
+  return extractTaskFromCall(inner as CallExpression, ctx);
 }
 
 /**
@@ -71,28 +137,12 @@ export function extractHttpTask(
   call: CallExpression,
   _ctx: CFGBuildContext
 ): CFGTask | undefined {
-  const httpInfo = parseHttpsCall(call);
+  const httpInfo = parseHttpsCall(call) ?? parseFetchCall(call);
   if (!httpInfo) {
     return undefined;
   }
 
-  const params: Record<string, unknown> = {
-    ApiEndpoint: httpInfo.url,
-    // Quote the method to ensure it's treated as a literal string, not a variable reference
-    Method: `"${httpInfo.method}"`,
-  };
-
-  if (httpInfo.headers) {
-    params.Headers = httpInfo.headers;
-  }
-
-  return {
-    kind: "Task",
-    service: "http",
-    operation: "invoke",
-    params,
-    sourceText: httpInfo.sourceText,
-  };
+  return buildTaskFromHttpCall(httpInfo);
 }
 
 /**
@@ -124,16 +174,7 @@ export function extractParallel(
     }
     // Handle: client.send(...) without await
     else if (Node.isCallExpression(el)) {
-      const parsed = parseSdkCall(el as CallExpression, ctx.registry);
-      if (parsed) {
-        task = {
-          kind: "Task",
-          service: parsed.service,
-          operation: parsed.operation,
-          params: parsed.params,
-          sourceText: parsed.sourceText,
-        };
-      }
+      task = extractTaskFromCall(el as CallExpression, ctx);
     }
 
     if (task) {
@@ -217,15 +258,9 @@ export function extractParallelFromMap(
     if (ctx.visitedNodes.has(node)) return;
 
     if (Node.isCallExpression(node)) {
-      const parsed = parseSdkCall(node as CallExpression, ctx.registry);
-      if (parsed) {
-        iteratorSeq.nodes.push({
-          kind: "Task",
-          service: parsed.service,
-          operation: parsed.operation,
-          params: parsed.params,
-          sourceText: parsed.sourceText,
-        });
+      const task = extractTaskFromCall(node as CallExpression, ctx);
+      if (task) {
+        iteratorSeq.nodes.push(task);
         ctx.visitedNodes.add(node);
       }
     }
@@ -452,7 +487,13 @@ export function processStatement(
   if (Node.isReturnStatement(stmt)) {
     const expr = stmt.getExpression();
     if (expr) {
-      processExpression(expr, seq, ctx);
+      const terminalFetchJson = extractTerminalFetchJsonTask(expr);
+      if (terminalFetchJson) {
+        ctx.visitedNodes.add(expr);
+        seq.nodes.push(terminalFetchJson);
+      } else {
+        processExpression(expr, seq, ctx);
+      }
     }
     return;
   }
@@ -472,7 +513,7 @@ export function processStatement(
 /**
  * Process an expression and add resulting CFG nodes to the sequence
  */
-function processExpression(
+export function processExpression(
   expr: Expression,
   seq: CFGSequence,
   ctx: CFGBuildContext
@@ -536,17 +577,10 @@ function processExpression(
       return;
     }
 
-    // Try SDK call
-    const parsed = parseSdkCall(expr as CallExpression, ctx.registry);
-    if (parsed) {
+    const task = extractTaskFromCall(expr as CallExpression, ctx);
+    if (task) {
       ctx.visitedNodes.add(expr);
-      seq.nodes.push({
-        kind: "Task",
-        service: parsed.service,
-        operation: parsed.operation,
-        params: parsed.params,
-        sourceText: parsed.sourceText,
-      });
+      seq.nodes.push(task);
     }
   }
 }

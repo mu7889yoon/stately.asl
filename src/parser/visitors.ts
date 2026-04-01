@@ -32,6 +32,91 @@ export interface ParsedCall {
   sourceText: string;
 }
 
+const SUPPORTED_FETCH_INIT_KEYS = new Set(["method", "headers", "body"]);
+
+function normalizePropertyName(name: string): string {
+  if (
+    (name.startsWith('"') && name.endsWith('"')) ||
+    (name.startsWith("'") && name.endsWith("'")) ||
+    (name.startsWith("`") && name.endsWith("`"))
+  ) {
+    return name.slice(1, -1);
+  }
+
+  return name;
+}
+
+function unwrapParens<T extends Node>(node: T): Node {
+  let current: Node = node;
+
+  while (Node.isParenthesizedExpression(current)) {
+    current = current.getExpression();
+  }
+
+  return current;
+}
+
+function isQuotedString(text: string): boolean {
+  return (
+    (text.startsWith('"') && text.endsWith('"')) ||
+    (text.startsWith("'") && text.endsWith("'"))
+  );
+}
+
+function parseHttpMethod(value: unknown, fallback = "GET"): string {
+  if (typeof value !== "string") {
+    return `"${fallback}"`;
+  }
+
+  return isQuotedString(value) ? `"${value.slice(1, -1).toUpperCase()}"` : value;
+}
+
+function isFetchCall(call: CallExpression): boolean {
+  const expr = unwrapParens(call.getExpression());
+  return Node.isIdentifier(expr) && expr.getText() === "fetch";
+}
+
+function getFetchInitObject(call: CallExpression): ObjectLiteralExpression | undefined {
+  const args = call.getArguments();
+  if (args.length < 2) {
+    return undefined;
+  }
+
+  const initArg = unwrapParens(args[1]);
+  if (!Node.isObjectLiteralExpression(initArg)) {
+    return undefined;
+  }
+
+  return initArg as ObjectLiteralExpression;
+}
+
+function resolveIdentifierInitializer(node: Node): Node | undefined {
+  if (!Node.isIdentifier(node)) {
+    return undefined;
+  }
+
+  const symbol = node.getSymbol();
+  const decl = symbol?.getDeclarations().find((candidate) =>
+    Node.isVariableDeclaration(candidate)
+  );
+
+  return decl && Node.isVariableDeclaration(decl) ? decl.getInitializer() : undefined;
+}
+
+function isFetchInitializer(node: Node | undefined): boolean {
+  if (!node) {
+    return false;
+  }
+
+  const current = unwrapParens(node);
+
+  if (Node.isAwaitExpression(current)) {
+    return isFetchInitializer(current.getExpression());
+  }
+
+  return Node.isCallExpression(current) && isFetchCall(current as CallExpression);
+}
+
 /**
  * Extracts parameters from an object literal expression
  */
@@ -45,7 +130,7 @@ export function extractObjectParams(obj: Node | undefined): Record<string, unkno
   for (const prop of objLiteral.getProperties()) {
     if (Node.isPropertyAssignment(prop)) {
       const pa = prop as PropertyAssignment;
-      const name = pa.getName();
+      const name = normalizePropertyName(pa.getName());
       const init = pa.getInitializer();
 
       if (init) {
@@ -61,7 +146,7 @@ export function extractObjectParams(obj: Node | undefined): Record<string, unkno
       }
     } else if (Node.isShorthandPropertyAssignment(prop)) {
       // Handle { TableName } shorthand
-      const name = prop.getName();
+      const name = normalizePropertyName(prop.getName());
       result[name] = name; // Will be transformed to $.name
     }
   }
@@ -201,7 +286,7 @@ export function parseSdkCall(
 export interface ParsedHttpCall {
   method: string;
   url: string;
-  headers?: Record<string, unknown>;
+  headers?: unknown;
   body?: unknown;
   sourceText: string;
 }
@@ -235,21 +320,86 @@ export function parseHttpsCall(call: CallExpression): ParsedHttpCall | undefined
   const url = args[0].getText();
 
   // https.get は GET固定、https.request はオプションから取得
-  let method = "GET";
-  let headers: Record<string, unknown> | undefined;
+  let method = "\"GET\"";
+  let headers: unknown;
+  let body: unknown;
 
   // オプション引数の解析 (https.request の場合)
-  if (args.length > 1 && Node.isObjectLiteralExpression(args[1])) {
-    const opts = extractObjectParams(args[1]);
+  const optionsArg =
+    args.length > 1 && Node.isObjectLiteralExpression(unwrapParens(args[1]))
+      ? (unwrapParens(args[1]) as ObjectLiteralExpression)
+      : undefined;
+  if (optionsArg) {
+    const opts = extractObjectParams(optionsArg);
     if (opts.method) {
-      method = String(opts.method).replace(/['"]/g, "").toUpperCase();
+      method = parseHttpMethod(opts.method, "GET");
     }
     if (opts.headers) {
-      headers = opts.headers as Record<string, unknown>;
+      headers = opts.headers;
+    }
+    if (opts.body) {
+      body = opts.body;
     }
   }
 
-  return { method, url, headers, sourceText: call.getText() };
+  return { method, url, headers, body, sourceText: call.getText() };
+}
+
+/**
+ * Parses fetch() calls into Step Functions HTTP Task input
+ */
+export function parseFetchCall(call: CallExpression): ParsedHttpCall | undefined {
+  if (!isFetchCall(call)) {
+    return undefined;
+  }
+
+  const args = call.getArguments();
+  if (args.length === 0) {
+    return undefined;
+  }
+
+  const initObject = getFetchInitObject(call);
+  if (args.length > 1 && !initObject) {
+    return undefined;
+  }
+
+  const init = initObject ? extractObjectParams(initObject) : {};
+
+  return {
+    method: parseHttpMethod(init.method, "GET"),
+    url: args[0].getText(),
+    headers: init.headers,
+    body: init.body,
+    sourceText: call.getText(),
+  };
+}
+
+/**
+ * Parses (await fetch(...)).json() into the underlying HTTP Task input
+ */
+export function parseTerminalFetchJsonCall(
+  call: CallExpression
+): ParsedHttpCall | undefined {
+  const expr = call.getExpression();
+  if (!Node.isPropertyAccessExpression(expr) || expr.getName() !== "json") {
+    return undefined;
+  }
+
+  if (call.getArguments().length !== 0) {
+    return undefined;
+  }
+
+  const target = unwrapParens(expr.getExpression());
+  if (!Node.isAwaitExpression(target)) {
+    return undefined;
+  }
+
+  const inner = unwrapParens(target.getExpression());
+  if (!Node.isCallExpression(inner)) {
+    return undefined;
+  }
+
+  return parseFetchCall(inner as CallExpression);
 }
 
 /**
@@ -385,6 +535,77 @@ export function parseCondition(expr: Expression): {
   return undefined;
 }
 
+function getFetchInitDiagnostics(call: CallExpression): string[] {
+  if (!isFetchCall(call)) {
+    return [];
+  }
+
+  const args = call.getArguments();
+  if (args.length < 2) {
+    return [];
+  }
+
+  const initArg = unwrapParens(args[1]);
+  if (!Node.isObjectLiteralExpression(initArg)) {
+    return ["fetch の第2引数はオブジェクトリテラルのみ対応です"];
+  }
+
+  const unsupportedKeys = initArg
+    .getProperties()
+    .flatMap((prop) => {
+      if (Node.isPropertyAssignment(prop) || Node.isShorthandPropertyAssignment(prop)) {
+        const name = normalizePropertyName(prop.getName());
+        return SUPPORTED_FETCH_INIT_KEYS.has(name) ? [] : [name];
+      }
+
+      return ["<computed>"];
+    });
+
+  if (unsupportedKeys.length === 0) {
+    return [];
+  }
+
+  return [
+    `fetch の未対応オプションは無視されます: ${unsupportedKeys.join(", ")}`,
+  ];
+}
+
+function isSupportedTerminalFetchJsonUsage(call: CallExpression): boolean {
+  if (!parseTerminalFetchJsonCall(call)) {
+    return false;
+  }
+
+  const parent = call.getParent();
+  if (!parent) {
+    return false;
+  }
+
+  if (Node.isReturnStatement(parent) && parent.getExpression() === call) {
+    return true;
+  }
+
+  const grandParent = parent.getParent();
+  return (
+    Node.isAwaitExpression(parent) &&
+    Node.isReturnStatement(grandParent) &&
+    grandParent.getExpression() === parent
+  );
+}
+
+function isUnsupportedFetchJsonUsage(call: CallExpression): boolean {
+  const expr = call.getExpression();
+  if (!Node.isPropertyAccessExpression(expr) || expr.getName() !== "json") {
+    return false;
+  }
+
+  if (parseTerminalFetchJsonCall(call)) {
+    return !isSupportedTerminalFetchJsonUsage(call);
+  }
+
+  const target = unwrapParens(expr.getExpression());
+  return Node.isIdentifier(target) && isFetchInitializer(resolveIdentifierInitializer(target));
+}
+
 /**
  * Forbidden modules that cannot be used in Step Functions
  */
@@ -457,6 +678,18 @@ export function runDetectors(
       const sdkCall = parseSdkCall(call, registry);
       if (sdkCall) {
         metrics.sdkCalls += 1;
+      }
+
+      for (const message of getFetchInitDiagnostics(call)) {
+        addDiag("warning", message, call);
+      }
+
+      if (isUnsupportedFetchJsonUsage(call)) {
+        addDiag(
+          "warning",
+          "fetch の response.json() は return 直結形のみ対応です",
+          call
+        );
       }
     }
 

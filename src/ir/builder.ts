@@ -110,7 +110,8 @@ function taskToIR(task: CFGTask, ctx: IRBuildContext): IRTask {
     service: task.service,
     operation: task.operation,
     params: paramsToJsonPath(task.params),
-    resultPath: `$.${id}Result`,
+    resultPath: task.resultPath === null ? undefined : task.resultPath ?? `$.${id}Result`,
+    outputPath: task.outputPath,
   };
 }
 

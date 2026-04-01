@@ -1,6 +1,6 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`transpile https-request > produces ASL Task for https.get 1`] = `
+exports[`transpile fetch-request > produces ASL Task for fetch GET 1`] = `
 {
   "QueryLanguage": "JSONata",
   "StartAt": "invoke_1",
@@ -19,7 +19,7 @@ exports[`transpile https-request > produces ASL Task for https.get 1`] = `
 }
 `;
 
-exports[`transpile https-request > produces ASL Task for https.request with POST 1`] = `
+exports[`transpile fetch-request > produces ASL Task for fetch POST with body 1`] = `
 {
   "QueryLanguage": "JSONata",
   "StartAt": "invoke_1",
@@ -32,9 +32,29 @@ exports[`transpile https-request > produces ASL Task for https.request with POST
           "Content-Type": "application/json",
         },
         "Method": "POST",
+        "RequestBody.$": "$.payload",
       },
       "Resource": "arn:aws:states:::http:invoke",
       "ResultPath": "$.invoke_1Result",
+      "Type": "Task",
+    },
+  },
+}
+`;
+
+exports[`transpile fetch-request > uses OutputPath for terminal fetch json 1`] = `
+{
+  "QueryLanguage": "JSONata",
+  "StartAt": "invoke_1",
+  "States": {
+    "invoke_1": {
+      "End": true,
+      "OutputPath": "$.ResponseBody",
+      "Parameters": {
+        "ApiEndpoint.$": "$.endpoint",
+        "Method": "GET",
+      },
+      "Resource": "arn:aws:states:::http:invoke",
       "Type": "Task",
     },
   },

@@ -4,7 +4,7 @@ TypeScriptで記述されたAWS SDK呼び出しを含む関数から、Amazon St
 
 AWS Step Functionsのワークフローを、慣れ親しんだTypeScriptの構文で記述できます。
 
-`await`、`Promise.all`、`for...of`、`if/else`、`try/catch`といった標準的なTypeScript構文が、対応するASLの状態（Task、Parallel、Map、Choice、Catch）に変換されます。
+`await`、`Promise.all`、`for...of`、`if/else`、`try/catch`といった標準的なTypeScript構文が、対応するASLの状態（Task、Parallel、Map、Choice、Catch）に変換されます。AWS SDK v3 に加えて、`https` / `fetch` ベースの HTTP 呼び出しも Step Functions の HTTP Task に変換できます。
 
 ## 特徴
 
@@ -162,6 +162,7 @@ export async function handler(TableName: string, Key: Record<string, any>, Item:
 | S3 | GetObject, PutObject, DeleteObject, CopyObject, ListObjectsV2 |
 | SQS | SendMessage, ReceiveMessage, DeleteMessage |
 | SNS | Publish |
+| HTTP | `https.get`, `https.request`, `fetch(url, init)` |
 
 ## 対応構文
 
@@ -203,6 +204,17 @@ try {
 } catch (error) {
   return { success: false, error: "Failed" };
 }
+```
+
+### HTTP呼び出しの例
+
+```typescript
+// fetch → HTTP Task
+await fetch(endpoint, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: payload,
+});
 ```
 
 
@@ -267,7 +279,7 @@ statelyはStep Functionsの制約に合わせて設計されているため、�
 
 ### 使用できない構文
 
-- 外部I/O（axios, fs, fetch等）- AWS SDKのみサポート
+- 外部I/O（axios, fs等）- AWS SDKとHTTP Taskに変換できる `https` / `fetch` のみサポート
 - 動的import（`import()`）
 - `eval`、`new Function()`
 - 再帰関数呼び出し
@@ -279,6 +291,8 @@ statelyはStep Functionsの制約に合わせて設計されているため、�
 - パラメータは `{"Key.$": "$.Key"}` 形式（JSONPath）で生成されます
 - 複雑な式や計算はサポートされていません
 - リテラル値は直接埋め込まれます
+- `fetch` は `fetch(url)` と `fetch(url, { method, headers, body })` の基本形をサポートします
+- `fetch(...).json()` は `return await (await fetch(...)).json()` のような終端の直結形のみサポートします
 
 ### サポート外のAWSサービス
 

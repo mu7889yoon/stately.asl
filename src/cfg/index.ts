@@ -2,7 +2,12 @@ import { Node, FunctionDeclaration, ArrowFunction, Block, SourceFile } from "ts-
 import type { CFGSequence } from "../types.js";
 import { PluginRegistry, defaultRegistry } from "../plugins/index.js";
 import { parseFile, findTargetFunction } from "../parser/index.js";
-import { processStatement, extractTaskFromAwait, CFGBuildContext } from "./patterns.js";
+import {
+  processStatement,
+  processExpression,
+  extractTaskFromAwait,
+  CFGBuildContext,
+} from "./patterns.js";
 
 export { processStatement, extractTaskFromAwait, extractParallel, extractMap, extractTry, extractChoice } from "./patterns.js";
 
@@ -52,11 +57,8 @@ export function buildCFG(options: BuildCFGOptions): BuildCFGResult {
     }
   } else {
     // Arrow function with expression body
-    if (Node.isAwaitExpression(body)) {
-      const task = extractTaskFromAwait(body, ctx);
-      if (task) {
-        cfg.nodes.push(task);
-      }
+    if (Node.isExpression(body)) {
+      processExpression(body, cfg, ctx);
     }
   }
 
