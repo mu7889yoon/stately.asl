@@ -41,12 +41,12 @@ describe("transpile fetch-request", () => {
     );
   });
 
-  it("warns when response.json is used via response variable", async () => {
+  it("errors when response.json is used via response variable", async () => {
     const result = await analyze({ entry: "test/fixtures/fetch-json-variable.ts" });
     expect(result.diagnostics).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          level: "warning",
+          level: "error",
           message: "fetch の response.json() は return 直結形のみ対応です",
         }),
       ])
