@@ -254,17 +254,14 @@ export function extractParallelFromMap(
   // Extract task from callback body
   const iteratorSeq: CFGSequence = { kind: "Sequence", nodes: [] };
 
-  callbackBody.forEachDescendant((node) => {
-    if (ctx.visitedNodes.has(node)) return;
-
-    if (Node.isCallExpression(node)) {
-      const task = extractTaskFromCall(node as CallExpression, ctx);
-      if (task) {
-        iteratorSeq.nodes.push(task);
-        ctx.visitedNodes.add(node);
-      }
+  if (Node.isBlock(callbackBody)) {
+    for (const childStmt of callbackBody.getStatements()) {
+      processStatement(childStmt, iteratorSeq, ctx);
     }
-  });
+  } else {
+    // Expression body (e.g. item => ddb.send(...)): processExpression handles the root call
+    processExpression(callbackBody as Expression, iteratorSeq, ctx);
+  }
 
   if (iteratorSeq.nodes.length === 0) {
     return undefined;
