@@ -32,6 +32,21 @@ function canHaveNext(state: IRState): state is IRTask | IRParallel | IRMap | IRP
 }
 
 /**
+ * Find IDs of terminal states (end: true, no next) within a given IR
+ */
+function findTerminalStateIds(
+  ir: IR,
+  allStates: Record<string, IRState>
+): string[] {
+  return Object.keys(ir.states).filter((id) => {
+    const state = allStates[id];
+    if (!state || !canHaveNext(state)) return false;
+    const s = state as IRTask | IRParallel | IRMap | IRPass | IRWait;
+    return s.end === true && !s.next;
+  });
+}
+
+/**
  * ID generator for creating unique state IDs
  */
 class IdGenerator {
@@ -53,6 +68,7 @@ class IdGenerator {
  */
 interface IRBuildContext {
   idGen: IdGenerator;
+  includeRetry: boolean;
 }
 
 /**
@@ -104,7 +120,7 @@ function paramsToJsonPath(params: Record<string, unknown>): JsonExpr {
 function taskToIR(task: CFGTask, ctx: IRBuildContext): IRTask {
   const id = ctx.idGen.generate(task.operation);
 
-  return {
+  const irTask: IRTask = {
     kind: "Task",
     id,
     service: task.service,
@@ -113,6 +129,14 @@ function taskToIR(task: CFGTask, ctx: IRBuildContext): IRTask {
     resultPath: task.resultPath === null ? undefined : task.resultPath ?? `$.${id}Result`,
     outputPath: task.outputPath,
   };
+
+  if (ctx.includeRetry) {
+    irTask.retry = [
+      { ErrorEquals: ["States.ALL"], IntervalSeconds: 1, MaxAttempts: 3, BackoffRate: 2 },
+    ];
+  }
+
+  return irTask;
 }
 
 /**
@@ -149,7 +173,9 @@ function mapToIR(map: CFGMap, ctx: IRBuildContext): IRMap {
 }
 
 /**
- * Convert a CFGTry to IR states with Catch configuration
+ * Convert a CFGTry to IR states with Catch configuration.
+ * Always appends a convergence Pass state so both the success path and
+ * the catch path land on a single exit point.
  */
 function tryToIR(
   tryNode: CFGTry,
@@ -164,6 +190,18 @@ function tryToIR(
     states[stateId] = state;
   }
 
+  // Convergence Pass: both success and catch paths land here
+  const convergenceId = ctx.idGen.generate("Pass");
+  const convergenceState: IRPass = { kind: "Pass", id: convergenceId, end: true };
+  states[convergenceId] = convergenceState;
+
+  // Wire try-success terminal states → convergence
+  for (const termId of findTerminalStateIds(tryIR, states)) {
+    const s = states[termId] as IRTask | IRParallel | IRMap | IRPass | IRWait;
+    s.end = false;
+    s.next = convergenceId;
+  }
+
   // If there's a catch block, add catch handling
   if (tryNode.catchBlock && tryNode.catchBlock.nodes.length > 0) {
     const catchIR = sequenceToIR(tryNode.catchBlock, ctx);
@@ -173,8 +211,7 @@ function tryToIR(
       states[stateId] = state;
     }
 
-    // Add Catch configuration to the last state in try block
-    // Actually, we need to add it to all states that could fail
+    // Add Catch configuration to all failable states in the try block
     for (const stateId of Object.keys(tryIR.states)) {
       const state = states[stateId] as IRTask | IRParallel | IRMap;
       if (state.kind === "Task" || state.kind === "Parallel" || state.kind === "Map") {
@@ -188,18 +225,28 @@ function tryToIR(
       }
     }
 
-    // Return all state IDs (try + catch)
+    // Wire catch terminal states → convergence
+    for (const termId of findTerminalStateIds(catchIR, states)) {
+      const s = states[termId] as IRTask | IRParallel | IRMap | IRPass | IRWait;
+      s.end = false;
+      s.next = convergenceId;
+    }
+
+    // Return all state IDs; convergenceId is last (= exit point)
     return [
       ...Object.keys(tryIR.states),
       ...Object.keys(catchIR.states),
+      convergenceId,
     ];
   }
 
-  return Object.keys(tryIR.states);
+  return [...Object.keys(tryIR.states), convergenceId];
 }
 
 /**
- * Convert a CFGChoice to IRChoice
+ * Convert a CFGChoice to IRChoice.
+ * A convergence Pass state is appended so subsequent statements can be
+ * reached from both the then-branch and the else-branch.
  */
 function choiceToIR(
   choice: CFGChoice,
@@ -223,7 +270,28 @@ function choiceToIR(
     }
   }
 
-  // Create the Choice state
+  // Convergence Pass: both branches land here so the next node can follow
+  const convergenceId = ctx.idGen.generate("Pass");
+  const convergenceState: IRPass = { kind: "Pass", id: convergenceId, end: true };
+  states[convergenceId] = convergenceState;
+
+  // Wire then-branch terminal states → convergence
+  for (const termId of findTerminalStateIds(thenIR, states)) {
+    const s = states[termId] as IRTask | IRParallel | IRMap | IRPass | IRWait;
+    s.end = false;
+    s.next = convergenceId;
+  }
+
+  // Wire else-branch terminal states → convergence
+  if (elseIR) {
+    for (const termId of findTerminalStateIds(elseIR, states)) {
+      const s = states[termId] as IRTask | IRParallel | IRMap | IRPass | IRWait;
+      s.end = false;
+      s.next = convergenceId;
+    }
+  }
+
+  // Create the Choice state (no Next on Choice itself — ASL spec)
   const irChoice: IRChoice = {
     kind: "Choice",
     id,
@@ -233,16 +301,17 @@ function choiceToIR(
         next: thenIR.startAt,
       },
     ],
-    default: elseIR?.startAt,
+    default: elseIR?.startAt ?? convergenceId,
   };
 
   states[id] = irChoice;
 
-  // Collect all state IDs
+  // convergenceId is last = exit point used by sequenceToIR
   const allIds = [id, ...Object.keys(thenIR.states)];
   if (elseIR) {
     allIds.push(...Object.keys(elseIR.states));
   }
+  allIds.push(convergenceId);
 
   return { choiceId: id, stateIds: allIds };
 }
@@ -338,6 +407,7 @@ export function sequenceToIR(
 ): IR {
   const context: IRBuildContext = ctx ?? {
     idGen: new IdGenerator(),
+    includeRetry: false,
   };
 
   const states: Record<string, IRState> = existingStates ?? {};
@@ -370,6 +440,7 @@ export function sequenceToIR(
     const tempStates: Record<string, IRState> = {};
     const tempCtx: IRBuildContext = {
       idGen: new IdGenerator(),
+      includeRetry: context.includeRetry,
     };
     const ids = nodeToIR(node, tempCtx, tempStates);
 
@@ -381,8 +452,8 @@ export function sequenceToIR(
       // For Task/Parallel/Map/Pass/Wait, it's just that state
       // For Choice, need special handling
       if (node.kind === "Choice") {
-        // Choice doesn't have a single exit - need convergence
-        nodeExitPoints.push(stateIds[currentIdx]); // Placeholder
+        // Exit via the convergence Pass that choiceToIR appended (last ID)
+        nodeExitPoints.push(stateIds[currentIdx + ids.length - 1]);
       } else if (node.kind === "Try") {
         // Try's exit is the last state of try or catch
         nodeExitPoints.push(stateIds[currentIdx + ids.length - 1]);
@@ -437,9 +508,10 @@ export interface BuildIROptions {
 /**
  * Build IR from CFG
  */
-export function buildIR(cfg: CFGSequence, _options?: BuildIROptions): IR {
+export function buildIR(cfg: CFGSequence, options?: BuildIROptions): IR {
   const ctx: IRBuildContext = {
     idGen: new IdGenerator(),
+    includeRetry: options?.includeRetry ?? false,
   };
 
   return sequenceToIR(cfg, ctx);
