@@ -359,10 +359,6 @@ export function parseFetchCall(call: CallExpression): ParsedHttpCall | undefined
   }
 
   const initObject = getFetchInitObject(call);
-  if (args.length > 1 && !initObject) {
-    return undefined;
-  }
-
   const init = initObject ? extractObjectParams(initObject) : {};
 
   return {
@@ -487,19 +483,27 @@ export function parseCondition(expr: Expression): {
     let operator: string;
     let value: unknown = rightText;
 
+    // Check if right-hand side is an identifier (variable reference)
+    const isRightIdentifier = Node.isIdentifier(right);
+
     // Try to parse numeric/boolean values
-    if (rightText === "true") value = true;
-    else if (rightText === "false") value = false;
-    else if (rightText === "null") value = null;
-    else if (!isNaN(Number(rightText))) value = Number(rightText);
-    else if (rightText.startsWith('"') || rightText.startsWith("'")) {
-      value = rightText.slice(1, -1); // Remove quotes
+    if (!isRightIdentifier) {
+      if (rightText === "true") value = true;
+      else if (rightText === "false") value = false;
+      else if (rightText === "null") value = null;
+      else if (!isNaN(Number(rightText))) value = Number(rightText);
+      else if (rightText.startsWith('"') || rightText.startsWith("'")) {
+        value = rightText.slice(1, -1); // Remove quotes
+      }
     }
 
     switch (op) {
       case "===":
       case "==":
-        if (typeof value === "string") operator = "StringEquals";
+        if (isRightIdentifier) {
+          operator = "StringEqualsPath";
+          value = `$.${rightText}`;
+        } else if (typeof value === "string") operator = "StringEquals";
         else if (typeof value === "number") operator = "NumericEquals";
         else if (typeof value === "boolean") operator = "BooleanEquals";
         else if (value === null) operator = "IsNull";
@@ -507,19 +511,28 @@ export function parseCondition(expr: Expression): {
         break;
       case "!==":
       case "!=":
-        operator = "StringNotEquals";
+        if (isRightIdentifier) {
+          operator = "StringNotEqualsPath";
+          value = `$.${rightText}`;
+        } else if (typeof value === "number") operator = "NumericNotEquals";
+        else if (typeof value === "boolean") operator = "BooleanNotEquals";
+        else operator = "StringNotEquals";
         break;
       case ">":
-        operator = "NumericGreaterThan";
+        if (isRightIdentifier) { operator = "NumericGreaterThanPath"; value = `$.${rightText}`; }
+        else operator = "NumericGreaterThan";
         break;
       case "<":
-        operator = "NumericLessThan";
+        if (isRightIdentifier) { operator = "NumericLessThanPath"; value = `$.${rightText}`; }
+        else operator = "NumericLessThan";
         break;
       case ">=":
-        operator = "NumericGreaterThanEquals";
+        if (isRightIdentifier) { operator = "NumericGreaterThanEqualsPath"; value = `$.${rightText}`; }
+        else operator = "NumericGreaterThanEquals";
         break;
       case "<=":
-        operator = "NumericLessThanEquals";
+        if (isRightIdentifier) { operator = "NumericLessThanEqualsPath"; value = `$.${rightText}`; }
+        else operator = "NumericLessThanEquals";
         break;
       default:
         return undefined;
@@ -686,7 +699,7 @@ export function runDetectors(
 
       if (isUnsupportedFetchJsonUsage(call)) {
         addDiag(
-          "warning",
+          "error",
           "fetch の response.json() は return 直結形のみ対応です",
           call
         );
