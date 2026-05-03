@@ -160,7 +160,11 @@ program
 
         // Validate with AWS CLI if requested
         if (opts.validate) {
-          validateWithAwsCli(json);
+          if (opts.ir) {
+            console.error(colors.yellow("⚠ IR モード指定時は --validate はスキップされます"));
+          } else {
+            validateWithAwsCli(json);
+          }
         }
       });
     }
