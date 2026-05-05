@@ -23,6 +23,8 @@ export interface CFGTask {
   service: string; // e.g., "dynamodb", "s3", "sqs", "sns"
   operation: string; // e.g., "putItem", "getObject"
   params: Record<string, unknown>;
+  resultPath?: string | null;
+  outputPath?: string;
   sourceText?: string;
 }
 
@@ -99,12 +101,20 @@ export type ChoiceOperator =
   | "StringEquals"
   | "StringEqualsPath"
   | "StringNotEquals"
+  | "StringNotEqualsPath"
   | "NumericEquals"
+  | "NumericNotEquals"
   | "NumericGreaterThan"
+  | "NumericGreaterThanPath"
   | "NumericLessThan"
+  | "NumericLessThanPath"
   | "NumericGreaterThanEquals"
+  | "NumericGreaterThanEqualsPath"
   | "NumericLessThanEquals"
+  | "NumericLessThanEqualsPath"
   | "BooleanEquals"
+  | "BooleanEqualsPath"
+  | "BooleanNotEquals"
   | "IsNull"
   | "IsPresent"
   | "IsString"
@@ -124,6 +134,7 @@ export interface IRTask {
   operation: string;
   params: JsonExpr;
   resultPath?: string;
+  outputPath?: string;
   retry?: RetryConfig[];
   catch?: CatchConfig[];
   next?: string;
@@ -253,6 +264,7 @@ export interface ASLTaskState {
   Parameters?: Record<string, unknown>;
   ResultPath?: string;
   ResultSelector?: Record<string, unknown>;
+  OutputPath?: string;
   Retry?: ASLRetryConfig[];
   Catch?: ASLCatchConfig[];
   Next?: string;

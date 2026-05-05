@@ -121,8 +121,15 @@ function serializeTask(task: IRTask): ASLTaskState {
     Type: "Task",
     Resource: buildSdkArn(task.service, task.operation),
     Parameters: task.params as Record<string, unknown>,
-    ResultPath: task.resultPath,
   };
+
+  if (task.resultPath) {
+    state.ResultPath = task.resultPath;
+  }
+
+  if (task.outputPath) {
+    state.OutputPath = task.outputPath;
+  }
 
   if (task.retry) {
     state.Retry = convertRetry(task.retry);
@@ -340,7 +347,6 @@ export function serializeToAsl(ir: IR): ASLStateMachine {
   }
 
   return {
-    QueryLanguage: "JSONata",
     StartAt: ir.startAt,
     States: states,
   };
