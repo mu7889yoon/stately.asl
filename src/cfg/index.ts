@@ -5,7 +5,6 @@ import { parseFile, findTargetFunction } from "../parser/index.js";
 import {
   processStatement,
   processExpression,
-  extractTaskFromAwait,
   CFGBuildContext,
 } from "./patterns.js";
 
