@@ -29,6 +29,22 @@ function buildRegistry(plugins?: ServicePlugin[]): PluginRegistry {
   return registry;
 }
 
+function runTranspile(options: TranspileOptions): TranspileResult {
+  const { entry, functionName, plugins, includeRetry = true } = options;
+
+  const registry = buildRegistry(plugins);
+  const diagnostics: Diagnostic[] = [];
+
+  const parseResult = parseFile({ entry, functionName, registry });
+  diagnostics.push(...parseResult.diagnostics);
+
+  const { cfg } = buildCFG({ entry, functionName, registry });
+  const ir = buildIR(cfg, { includeRetry });
+  const asl = serializeToAsl(ir);
+
+  return { ir, asl, diagnostics };
+}
+
 /**
  * Transpile TypeScript to ASL State Machine
  *
@@ -36,31 +52,7 @@ function buildRegistry(plugins?: ServicePlugin[]): PluginRegistry {
  * @returns Transpile result with IR, ASL, and diagnostics
  */
 export async function transpile(options: TranspileOptions): Promise<TranspileResult> {
-  const { entry, functionName, plugins, includeRetry = true } = options;
-
-  const registry = buildRegistry(plugins);
-
-  // Collect diagnostics
-  const diagnostics: Diagnostic[] = [];
-
-  // Parse and analyze
-  const parseResult = parseFile({ entry, functionName, registry });
-  diagnostics.push(...parseResult.diagnostics);
-
-  // Build CFG
-  const { cfg } = buildCFG({ entry, functionName, registry });
-
-  // Build IR
-  const ir = buildIR(cfg, { includeRetry });
-
-  // Serialize to ASL
-  const asl = serializeToAsl(ir);
-
-  return {
-    ir,
-    asl,
-    diagnostics,
-  };
+  return runTranspile(options);
 }
 
 /**
@@ -82,17 +74,5 @@ export async function analyze(options: { entry: string; functionName?: string })
  * Synchronous version of transpile for simpler use cases
  */
 export function transpileSync(options: TranspileOptions): TranspileResult {
-  const { entry, functionName, plugins, includeRetry = true } = options;
-
-  const registry = buildRegistry(plugins);
-
-  const diagnostics: Diagnostic[] = [];
-  const parseResult = parseFile({ entry, functionName, registry });
-  diagnostics.push(...parseResult.diagnostics);
-
-  const { cfg } = buildCFG({ entry, functionName, registry });
-  const ir = buildIR(cfg, { includeRetry });
-  const asl = serializeToAsl(ir);
-
-  return { ir, asl, diagnostics };
+  return runTranspile(options);
 }

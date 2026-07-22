@@ -57,10 +57,6 @@ class IdGenerator {
     this.counters.set(prefix, count);
     return `${prefix}_${count}`;
   }
-
-  reset(): void {
-    this.counters.clear();
-  }
 }
 
 /**
@@ -69,6 +65,11 @@ class IdGenerator {
 interface IRBuildContext {
   idGen: IdGenerator;
   includeRetry: boolean;
+}
+
+interface ConvertedNode {
+  entry: string;
+  exit: string;
 }
 
 /**
@@ -412,62 +413,23 @@ export function sequenceToIR(
 
   const states: Record<string, IRState> = existingStates ?? {};
   const stateIds: string[] = [];
+  const convertedNodes: ConvertedNode[] = [];
 
   for (const node of seq.nodes) {
     const ids = nodeToIR(node, context, states);
     stateIds.push(...ids);
-  }
-
-  // Link states with next transitions
-  // Find the "main" state IDs (first state of each node's conversion)
-  const mainIds: string[] = [];
-  let idx = 0;
-  for (const node of seq.nodes) {
-    const ids = nodeToIR(node, context, {});
     if (ids.length > 0) {
-      mainIds.push(stateIds[idx]);
+      convertedNodes.push({
+        entry: ids[0],
+        exit: ids[ids.length - 1],
+      });
     }
-    idx += ids.length;
-  }
-
-  // Actually, let's redo this more carefully
-  // We need to track the entry point of each node conversion
-  const nodeEntryPoints: string[] = [];
-  const nodeExitPoints: string[] = [];
-
-  let currentIdx = 0;
-  for (const node of seq.nodes) {
-    const tempStates: Record<string, IRState> = {};
-    const tempCtx: IRBuildContext = {
-      idGen: new IdGenerator(),
-      includeRetry: context.includeRetry,
-    };
-    const ids = nodeToIR(node, tempCtx, tempStates);
-
-    if (ids.length > 0) {
-      // Entry point is the first state
-      nodeEntryPoints.push(stateIds[currentIdx]);
-
-      // Exit point is the last "main" state (not nested)
-      // For Task/Parallel/Map/Pass/Wait, it's just that state
-      // For Choice, need special handling
-      if (node.kind === "Choice") {
-        // Exit via the convergence Pass that choiceToIR appended (last ID)
-        nodeExitPoints.push(stateIds[currentIdx + ids.length - 1]);
-      } else if (node.kind === "Try") {
-        // Try's exit is the last state of try or catch
-        nodeExitPoints.push(stateIds[currentIdx + ids.length - 1]);
-      } else {
-        nodeExitPoints.push(stateIds[currentIdx]);
-      }
-    }
-    currentIdx += ids.length;
   }
 
   // Link sequential states
-  for (let i = 0; i < nodeEntryPoints.length - 1; i++) {
-    const currentExit = nodeExitPoints[i];
-    const nextEntry = nodeEntryPoints[i + 1];
+  for (let i = 0; i < convertedNodes.length - 1; i++) {
+    const currentExit = convertedNodes[i].exit;
+    const nextEntry = convertedNodes[i + 1].entry;
     const state = states[currentExit];
 
     if (state && canHaveNext(state)) {
@@ -476,8 +438,8 @@ export function sequenceToIR(
   }
 
   // Mark the last state as end
-  if (nodeExitPoints.length > 0) {
-    const lastExit = nodeExitPoints[nodeExitPoints.length - 1];
+  if (convertedNodes.length > 0) {
+    const lastExit = convertedNodes[convertedNodes.length - 1].exit;
     const lastState = states[lastExit];
     if (lastState && canHaveNext(lastState)) {
       (lastState as IRTask | IRParallel | IRMap | IRPass | IRWait).end = true;
