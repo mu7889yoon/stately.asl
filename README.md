@@ -236,10 +236,14 @@ const result = await transpile({
 });
 
 // 結果
+console.log(result.ok);          // 変換成功かどうか
 console.log(result.asl);         // ASL State Machine
 console.log(result.ir);          // 中間表現
 console.log(result.diagnostics); // 警告・エラー
 ```
+
+未対応構文などのエラーがある場合、`ok` は `false` になります。診断確認用に
+`asl` と `ir` は返りますが、成功した変換結果としては使用しないでください。
 
 ### analyze関数
 

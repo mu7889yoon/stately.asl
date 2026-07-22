@@ -11,6 +11,7 @@ import {
   ArrowFunction,
   SourceFile,
   Expression,
+  Statement,
 } from "ts-morph";
 import type { Diagnostic } from "../types.js";
 import { PluginRegistry, deriveAslOperation } from "../plugins/index.js";
@@ -617,6 +618,305 @@ function isUnsupportedFetchJsonUsage(call: CallExpression): boolean {
   return Node.isIdentifier(target) && isFetchInitializer(resolveIdentifierInitializer(target));
 }
 
+function isClientInitializer(node: Node): boolean {
+  if (!Node.isNewExpression(node)) {
+    return false;
+  }
+
+  return node.getExpression().getText().endsWith("Client");
+}
+
+function unwrapAwait(node: Node): Node {
+  const current = unwrapParens(node);
+  return Node.isAwaitExpression(current)
+    ? unwrapParens(current.getExpression())
+    : current;
+}
+
+function isSupportedTaskCall(call: CallExpression, registry: PluginRegistry): boolean {
+  return Boolean(
+    parseSdkCall(call, registry) ?? parseHttpsCall(call) ?? parseFetchCall(call)
+  );
+}
+
+function getPromiseAllMapCallback(call: CallExpression): Node | undefined {
+  if (!isPromiseAll(call)) {
+    return undefined;
+  }
+
+  const firstArg = call.getArguments()[0];
+  if (!firstArg || !Node.isCallExpression(firstArg)) {
+    return undefined;
+  }
+
+  const mapExpression = firstArg.getExpression();
+  if (
+    !Node.isPropertyAccessExpression(mapExpression) ||
+    mapExpression.getName() !== "map"
+  ) {
+    return undefined;
+  }
+
+  const callback = firstArg.getArguments()[0];
+  return callback &&
+    (Node.isArrowFunction(callback) || Node.isFunctionExpression(callback))
+    ? callback.getBody()
+    : undefined;
+}
+
+function isSupportedPromiseAll(
+  call: CallExpression,
+  registry: PluginRegistry,
+  inspectStatement: (statement: Statement) => void
+): boolean {
+  const array = getPromiseAllArray(call);
+  if (array) {
+    return (
+      array.getElements().length > 0 &&
+      array.getElements().every((element) => {
+        const inner = unwrapAwait(element);
+        return Node.isCallExpression(inner) && isSupportedTaskCall(inner, registry);
+      })
+    );
+  }
+
+  const callbackBody = getPromiseAllMapCallback(call);
+  if (!callbackBody) {
+    return false;
+  }
+
+  if (Node.isBlock(callbackBody)) {
+    for (const statement of callbackBody.getStatements()) {
+      inspectStatement(statement);
+    }
+    return callbackBody.getStatements().length > 0;
+  }
+
+  const inner = unwrapAwait(callbackBody);
+  return Node.isCallExpression(inner) && isSupportedTaskCall(inner, registry);
+}
+
+function getUnsupportedExpressionMessage(expr: Expression): string {
+  if (Node.isCallExpression(expr)) {
+    return `未対応の関数呼び出しです: ${expr.getExpression().getText()}()`;
+  }
+
+  if (Node.isBinaryExpression(expr)) {
+    const operator = expr.getOperatorToken().getText();
+    if (["=", "+=", "-=", "*=", "/=", "%="].includes(operator)) {
+      return `未対応の代入式です: ${operator}`;
+    }
+    return `未対応の計算式です: ${operator}`;
+  }
+
+  if (Node.isPostfixUnaryExpression(expr) || Node.isPrefixUnaryExpression(expr)) {
+    return `未対応の更新式です: ${expr.getText()}`;
+  }
+
+  if (Node.isObjectLiteralExpression(expr)) {
+    return "未対応のオブジェクト構築です";
+  }
+
+  if (Node.isArrayLiteralExpression(expr)) {
+    return "未対応の配列構築です";
+  }
+
+  return `未対応の式です: ${expr.getKindName()}`;
+}
+
+function detectUnsupportedSyntax(
+  sf: SourceFile,
+  registry: PluginRegistry,
+  functionName: string | undefined,
+  addDiag: (level: Diagnostic["level"], message: string, node?: Node) => void
+): void {
+  const target = findTargetFunction(sf, functionName);
+  const body = target?.getBody();
+  if (!body) {
+    return;
+  }
+
+  const inspectExpression = (expr: Expression): boolean => {
+    const current = unwrapParens(expr);
+
+    if (Node.isAwaitExpression(current)) {
+      const inner = unwrapParens(current.getExpression());
+      if (!Node.isCallExpression(inner)) {
+        addDiag("error", getUnsupportedExpressionMessage(current), current);
+        return false;
+      }
+
+      if (isSupportedTaskCall(inner, registry)) {
+        return true;
+      }
+
+      if (isPromiseAll(inner) && isSupportedPromiseAll(inner, registry, inspectStatement)) {
+        return true;
+      }
+
+      addDiag("error", getUnsupportedExpressionMessage(inner), inner);
+      return false;
+    }
+
+    if (Node.isCallExpression(current)) {
+      if (isSupportedTaskCall(current, registry)) {
+        return true;
+      }
+
+      if (
+        isPromiseAll(current) &&
+        isSupportedPromiseAll(current, registry, inspectStatement)
+      ) {
+        return true;
+      }
+
+      addDiag("error", getUnsupportedExpressionMessage(current), current);
+      return false;
+    }
+
+    addDiag("error", getUnsupportedExpressionMessage(current as Expression), current);
+    return false;
+  };
+
+  function inspectStatement(statement: Statement): void {
+    if (Node.isEmptyStatement(statement)) {
+      return;
+    }
+
+    if (Node.isExpressionStatement(statement)) {
+      inspectExpression(statement.getExpression());
+      return;
+    }
+
+    if (Node.isVariableStatement(statement)) {
+      for (const declaration of statement.getDeclarationList().getDeclarations()) {
+        const initializer = declaration.getInitializer();
+        if (!initializer || isClientInitializer(initializer)) {
+          continue;
+        }
+        inspectExpression(initializer as Expression);
+      }
+      return;
+    }
+
+    if (Node.isForOfStatement(statement)) {
+      if (!parseForOfStatement(statement)) {
+        addDiag("error", "未対応の for...of 文です", statement);
+        return;
+      }
+
+      const loopBody = statement.getStatement();
+      if (Node.isBlock(loopBody)) {
+        for (const child of loopBody.getStatements()) {
+          inspectStatement(child);
+        }
+      } else {
+        inspectStatement(loopBody);
+      }
+      return;
+    }
+
+    if (Node.isIfStatement(statement)) {
+      if (!parseCondition(statement.getExpression())) {
+        addDiag("error", "未対応の if 条件式です", statement.getExpression());
+      }
+
+      const thenStatement = statement.getThenStatement();
+      if (Node.isBlock(thenStatement)) {
+        for (const child of thenStatement.getStatements()) {
+          inspectStatement(child);
+        }
+      } else {
+        inspectStatement(thenStatement);
+      }
+
+      const elseStatement = statement.getElseStatement();
+      if (elseStatement) {
+        if (Node.isBlock(elseStatement)) {
+          for (const child of elseStatement.getStatements()) {
+            inspectStatement(child);
+          }
+        } else {
+          inspectStatement(elseStatement);
+        }
+      }
+      return;
+    }
+
+    if (Node.isTryStatement(statement)) {
+      for (const child of statement.getTryBlock().getStatements()) {
+        inspectStatement(child);
+      }
+      const catchClause = statement.getCatchClause();
+      if (catchClause) {
+        for (const child of catchClause.getBlock().getStatements()) {
+          inspectStatement(child);
+        }
+      }
+      if (statement.getFinallyBlock()) {
+        addDiag("error", "finally ブロックは未対応です", statement.getFinallyBlock());
+      }
+      return;
+    }
+
+    if (Node.isReturnStatement(statement)) {
+      const expression = statement.getExpression();
+      if (!expression) {
+        return;
+      }
+
+      const unwrapped = unwrapAwait(expression);
+      if (
+        Node.isCallExpression(unwrapped) &&
+        parseTerminalFetchJsonCall(unwrapped)
+      ) {
+        return;
+      }
+
+      if (
+        Node.isCallExpression(unwrapped) &&
+        isUnsupportedFetchJsonUsage(unwrapped)
+      ) {
+        return;
+      }
+
+      addDiag("error", "return 値の変換は未対応です", statement);
+      return;
+    }
+
+    if (
+      Node.isTypeAliasDeclaration(statement) ||
+      Node.isInterfaceDeclaration(statement)
+    ) {
+      return;
+    }
+
+    if (Node.isForStatement(statement)) {
+      addDiag("error", "通常の for 文は未対応です。for...of を使用してください", statement);
+      return;
+    }
+
+    if (Node.isWhileStatement(statement) || Node.isDoStatement(statement)) {
+      addDiag("error", "while / do...while ループは未対応です", statement);
+      return;
+    }
+
+    addDiag(
+      "error",
+      `未対応の文です: ${statement.getKindName()}`,
+      statement
+    );
+  }
+
+  if (Node.isBlock(body)) {
+    for (const statement of body.getStatements()) {
+      inspectStatement(statement);
+    }
+  } else if (Node.isExpression(body)) {
+    inspectExpression(body);
+  }
+}
+
 /**
  * Forbidden modules that cannot be used in Step Functions
  */
@@ -637,7 +937,8 @@ const FORBIDDEN_MODULES = new Set([
  */
 export function runDetectors(
   sf: SourceFile,
-  registry: PluginRegistry
+  registry: PluginRegistry,
+  functionName?: string
 ): { diagnostics: Diagnostic[]; metrics: DetectorMetrics } {
   const diagnostics: Diagnostic[] = [];
   const metrics: DetectorMetrics = {
@@ -659,14 +960,21 @@ export function runDetectors(
     });
   };
 
-  sf.forEachDescendant((node) => {
-    // Forbidden imports
-    if (Node.isImportDeclaration(node)) {
-      const mod = node.getModuleSpecifierValue();
-      if (FORBIDDEN_MODULES.has(mod)) {
-        addDiag("error", `外部I/Oモジュールは使用不可: ${mod}`, node);
-      }
+  for (const importDeclaration of sf.getImportDeclarations()) {
+    const moduleSpecifier = importDeclaration.getModuleSpecifierValue();
+    if (FORBIDDEN_MODULES.has(moduleSpecifier)) {
+      addDiag(
+        "error",
+        `外部I/Oモジュールは使用不可: ${moduleSpecifier}`,
+        importDeclaration
+      );
     }
+  }
+
+  const targetFunction = findTargetFunction(sf, functionName);
+  const detectorRoot = targetFunction?.getBody();
+
+  detectorRoot?.forEachDescendant((node) => {
 
     // Dynamic import / eval
     if (Node.isCallExpression(node)) {
@@ -740,21 +1048,31 @@ export function runDetectors(
       }
     }
 
-    // Recursion detection
-    if (Node.isFunctionDeclaration(node)) {
-      const fd = node as FunctionDeclaration;
-      const name = fd.getName();
-      if (name) {
-        fd.getBody()?.forEachDescendant((n) => {
-          if (Node.isCallExpression(n)) {
-            if (n.getExpression().getText() === name) {
-              addDiag("error", `再帰は使用不可: 関数 ${name} が自身を呼び出しています`, n);
-            }
-          }
-        });
-      }
-    }
   });
+
+  const targetParent = targetFunction?.getParent();
+  const targetName = Node.isFunctionDeclaration(targetFunction)
+    ? targetFunction.getName()
+    : targetParent && Node.isVariableDeclaration(targetParent)
+      ? targetParent.getName()
+      : undefined;
+
+  if (targetName) {
+    detectorRoot?.forEachDescendant((node) => {
+      if (
+        Node.isCallExpression(node) &&
+        node.getExpression().getText() === targetName
+      ) {
+        addDiag(
+          "error",
+          `再帰は使用不可: 関数 ${targetName} が自身を呼び出しています`,
+          node
+        );
+      }
+    });
+  }
+
+  detectUnsupportedSyntax(sf, registry, functionName, addDiag);
 
   return { diagnostics, metrics };
 }
