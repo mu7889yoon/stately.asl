@@ -7,16 +7,16 @@ exports[`transpile ddb-batch > produces Parallel/Map/Catch-like 1`] = `
     "Map_1": {
       "ItemsPath": "$.items",
       "Iterator": {
-        "StartAt": "putItem_3",
+        "StartAt": "putItem_2",
         "States": {
-          "putItem_3": {
+          "putItem_2": {
             "End": true,
             "Parameters": {
               "Item.$": "$.Item",
               "TableName.$": "$.TableName",
             },
             "Resource": "arn:aws:states:::aws-sdk:dynamodb:putItem",
-            "ResultPath": "$.putItem_3Result",
+            "ResultPath": "$.putItem_2Result",
             "Retry": [
               {
                 "BackoffRate": 2,
@@ -31,7 +31,7 @@ exports[`transpile ddb-batch > produces Parallel/Map/Catch-like 1`] = `
           },
         },
       },
-      "Next": "putItem_5",
+      "Next": "putItem_3",
       "ResultPath": undefined,
       "Type": "Map",
     },
@@ -71,14 +71,14 @@ exports[`transpile ddb-batch > produces Parallel/Map/Catch-like 1`] = `
       "End": true,
       "Type": "Pass",
     },
-    "putItem_5": {
+    "putItem_3": {
       "Next": "Pass_1",
       "Parameters": {
         "Item.$": "$.items[0]",
         "TableName.$": "$.TableName",
       },
       "Resource": "arn:aws:states:::aws-sdk:dynamodb:putItem",
-      "ResultPath": "$.putItem_5Result",
+      "ResultPath": "$.putItem_3Result",
       "Retry": [
         {
           "BackoffRate": 2,
