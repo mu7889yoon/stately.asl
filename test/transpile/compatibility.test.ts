@@ -62,12 +62,33 @@ describe("unsupported syntax compatibility diagnostics", () => {
         }),
         expect.objectContaining({ message: "未対応の if 条件式です" }),
         expect.objectContaining({ message: "未対応の for...of 文です" }),
+        expect.objectContaining({
+          message: "SDK Command の引数はオブジェクトリテラルのみ対応です",
+        }),
+        expect.objectContaining({
+          message: "Task入力配列の動的な要素は未対応です",
+        }),
+        expect.objectContaining({
+          message: "未対応の関数呼び出しです: getItems()",
+        }),
+        expect.objectContaining({
+          message: "https.request のオプションはオブジェクトリテラルのみ対応です",
+        }),
+        expect.objectContaining({
+          message: "未対応の関数呼び出しです: getEndpoint()",
+        }),
         expect.objectContaining({ message: "未対応の代入式です: =" }),
         expect.objectContaining({
           message: "while / do...while ループは未対応です",
         }),
       ]),
     );
+
+    expect(
+      result.diagnostics.filter(
+        (diagnostic) => diagnostic.message === "未対応の if 条件式です",
+      ),
+    ).toHaveLength(3);
   });
 
   it("fails analysis when the selected function does not exist", async () => {

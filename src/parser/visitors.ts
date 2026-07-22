@@ -34,6 +34,18 @@ export interface ParsedCall {
 }
 
 const SUPPORTED_FETCH_INIT_KEYS = new Set(["method", "headers", "body"]);
+const SERIALIZED_CHOICE_OPERATORS = new Set([
+  "StringEquals",
+  "StringEqualsPath",
+  "StringNotEquals",
+  "NumericEquals",
+  "NumericGreaterThan",
+  "NumericLessThan",
+  "NumericGreaterThanEquals",
+  "NumericLessThanEquals",
+  "BooleanEquals",
+  "IsNull",
+]);
 
 function normalizePropertyName(name: string): string {
   if (
@@ -409,6 +421,11 @@ export function parseFetchCall(call: CallExpression): ParsedHttpCall | undefined
 export function parseTerminalFetchJsonCall(
   call: CallExpression
 ): ParsedHttpCall | undefined {
+  const fetchCall = getTerminalFetchCall(call);
+  return fetchCall ? parseFetchCall(fetchCall) : undefined;
+}
+
+function getTerminalFetchCall(call: CallExpression): CallExpression | undefined {
   const expr = call.getExpression();
   if (!Node.isPropertyAccessExpression(expr) || expr.getName() !== "json") {
     return undefined;
@@ -428,7 +445,7 @@ export function parseTerminalFetchJsonCall(
     return undefined;
   }
 
-  return parseFetchCall(inner as CallExpression);
+  return isFetchCall(inner) ? inner : undefined;
 }
 
 /**
@@ -583,6 +600,10 @@ export function parseCondition(expr: Expression): {
         return undefined;
     }
 
+    if (!SERIALIZED_CHOICE_OPERATORS.has(operator)) {
+      return undefined;
+    }
+
     return {
       variable: `$.${leftText}`,
       operator,
@@ -729,7 +750,8 @@ function isSupportedPromiseAll(
   call: CallExpression,
   registry: PluginRegistry,
   inspectStatement: (statement: Statement) => void,
-  inspectTaskCall: (taskCall: CallExpression) => void
+  inspectTaskCall: (taskCall: CallExpression) => void,
+  inspectUnsupportedExpression: (expression: Expression) => void
 ): boolean {
   const array = getPromiseAllArray(call);
   if (array) {
@@ -749,6 +771,17 @@ function isSupportedPromiseAll(
   const callbackBody = getPromiseAllMapCallback(call);
   if (!callbackBody) {
     return false;
+  }
+
+  const mapCall = call.getArguments()[0];
+  if (mapCall && Node.isCallExpression(mapCall)) {
+    const mapExpression = mapCall.getExpression();
+    if (Node.isPropertyAccessExpression(mapExpression)) {
+      const receiver = mapExpression.getExpression();
+      if (!isJsonPathExpression(receiver)) {
+        inspectUnsupportedExpression(receiver);
+      }
+    }
   }
 
   if (Node.isBlock(callbackBody)) {
@@ -796,15 +829,23 @@ function getUnsupportedExpressionMessage(expr: Expression): string {
 
 function inspectTaskInput(
   node: Node,
-  addDiag: (level: Diagnostic["level"], message: string, node?: Node) => void
+  addDiag: (level: Diagnostic["level"], message: string, node?: Node) => void,
+  allowJsonPath = true
 ): void {
   const current = unwrapParens(node);
 
   if (
-    isJsonPathExpression(current) ||
     isLiteralExpression(current) ||
     !isNaN(Number(current.getText()))
   ) {
+    return;
+  }
+
+
+  if (isJsonPathExpression(current)) {
+    if (!allowJsonPath) {
+      addDiag("error", "Task入力配列の動的な要素は未対応です", current);
+    }
     return;
   }
 
@@ -813,7 +854,7 @@ function inspectTaskInput(
       if (Node.isPropertyAssignment(property)) {
         const initializer = property.getInitializer();
         if (initializer) {
-          inspectTaskInput(initializer, addDiag);
+          inspectTaskInput(initializer, addDiag, allowJsonPath);
         }
       } else if (!Node.isShorthandPropertyAssignment(property)) {
         addDiag(
@@ -828,7 +869,7 @@ function inspectTaskInput(
 
   if (Node.isArrayLiteralExpression(current)) {
     for (const element of current.getElements()) {
-      inspectTaskInput(element, addDiag);
+      inspectTaskInput(element, addDiag, false);
     }
     return;
   }
@@ -850,19 +891,47 @@ function inspectTaskCallInputs(
   if (parseSdkCall(call, registry)) {
     const command = call.getArguments()[0];
     if (command && Node.isNewExpression(command)) {
-      for (const argument of command.getArguments()) {
-        inspectTaskInput(argument, addDiag);
+      const input = command.getArguments()[0];
+      if (input && !Node.isObjectLiteralExpression(unwrapParens(input))) {
+        addDiag(
+          "error",
+          "SDK Command の引数はオブジェクトリテラルのみ対応です",
+          input
+        );
+      } else if (input) {
+        inspectTaskInput(input, addDiag);
       }
     }
     return;
   }
 
   const args = call.getArguments();
+  const expression = call.getExpression();
+  const isHttpsRequest =
+    Node.isPropertyAccessExpression(expression) &&
+    expression.getExpression().getText() === "https" &&
+    expression.getName() === "request";
+
   for (const argument of args) {
     if (Node.isArrowFunction(argument) || Node.isFunctionExpression(argument)) {
       continue;
     }
     inspectTaskInput(argument, addDiag);
+  }
+
+  const options = args[1];
+  if (
+    isHttpsRequest &&
+    options &&
+    !Node.isObjectLiteralExpression(unwrapParens(options)) &&
+    !Node.isArrowFunction(options) &&
+    !Node.isFunctionExpression(options)
+  ) {
+    addDiag(
+      "error",
+      "https.request のオプションはオブジェクトリテラルのみ対応です",
+      options
+    );
   }
 }
 
@@ -899,7 +968,8 @@ function detectUnsupportedSyntax(
           inner,
           registry,
           inspectStatement,
-          (taskCall) => inspectTaskCallInputs(taskCall, registry, addDiag)
+          (taskCall) => inspectTaskCallInputs(taskCall, registry, addDiag),
+          (unsupported) => inspectExpression(unsupported)
         )
       ) {
         return true;
@@ -921,7 +991,8 @@ function detectUnsupportedSyntax(
           current,
           registry,
           inspectStatement,
-          (taskCall) => inspectTaskCallInputs(taskCall, registry, addDiag)
+          (taskCall) => inspectTaskCallInputs(taskCall, registry, addDiag),
+          (unsupported) => inspectExpression(unsupported)
         )
       ) {
         return true;
@@ -1019,14 +1090,23 @@ function detectUnsupportedSyntax(
     if (Node.isReturnStatement(statement)) {
       const expression = statement.getExpression();
       if (!expression) {
+        const parent = statement.getParent();
+        const isTrailingTopLevelReturn =
+          parent === body &&
+          Node.isBlock(parent) &&
+          parent.getStatements().at(-1) === statement;
+        if (!isTrailingTopLevelReturn) {
+          addDiag("error", "途中の return は未対応です", statement);
+        }
         return;
       }
 
       const unwrapped = unwrapAwait(expression);
-      if (
-        Node.isCallExpression(unwrapped) &&
-        parseTerminalFetchJsonCall(unwrapped)
-      ) {
+      const terminalFetchCall = Node.isCallExpression(unwrapped)
+        ? getTerminalFetchCall(unwrapped)
+        : undefined;
+      if (terminalFetchCall) {
+        inspectTaskCallInputs(terminalFetchCall, registry, addDiag);
         return;
       }
 
