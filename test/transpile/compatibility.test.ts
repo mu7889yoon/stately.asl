@@ -48,6 +48,46 @@ describe("unsupported syntax compatibility diagnostics", () => {
     expect(result.diagnostics).toEqual([]);
   });
 
+  it("rejects unsupported expressions nested in supported constructs", async () => {
+    const result = await analyze({
+      entry: "test/fixtures/compatibility-invalid-expressions.ts",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ message: "未対応の計算式です: +" }),
+        expect.objectContaining({
+          message: "未対応の関数呼び出しです: normalize()",
+        }),
+        expect.objectContaining({ message: "未対応の if 条件式です" }),
+        expect.objectContaining({ message: "未対応の for...of 文です" }),
+        expect.objectContaining({ message: "未対応の代入式です: =" }),
+        expect.objectContaining({
+          message: "while / do...while ループは未対応です",
+        }),
+      ]),
+    );
+  });
+
+  it("fails analysis when the selected function does not exist", async () => {
+    const result = await analyze({
+      entry: "test/fixtures/compatibility-scope.ts",
+      functionName: "missingHandler",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          level: "error",
+          message: "変換対象の関数が見つかりません: missingHandler",
+          nodeLocation: expect.stringMatching(/compatibility-scope\.ts:1$/),
+        }),
+      ]),
+    );
+  });
+
   it("exposes failure through async and synchronous transpile results", async () => {
     const asyncResult = await transpile({ entry: "examples/05-etl.ts" });
     const syncResult = transpileSync({ entry: "examples/05-etl.ts" });

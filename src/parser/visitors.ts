@@ -57,6 +57,40 @@ function unwrapParens<T extends Node>(node: T): Node {
   return current;
 }
 
+function isJsonPathExpression(node: Node): boolean {
+  const current = unwrapParens(node);
+
+  if (Node.isIdentifier(current)) {
+    return true;
+  }
+
+  if (Node.isPropertyAccessExpression(current)) {
+    return isJsonPathExpression(current.getExpression());
+  }
+
+  if (Node.isElementAccessExpression(current)) {
+    const argument = current.getArgumentExpression();
+    return (
+      isJsonPathExpression(current.getExpression()) &&
+      Boolean(argument && Node.isNumericLiteral(argument))
+    );
+  }
+
+  return false;
+}
+
+function isLiteralExpression(node: Node): boolean {
+  const current = unwrapParens(node);
+  const text = current.getText();
+  return (
+    Node.isStringLiteral(current) ||
+    Node.isNumericLiteral(current) ||
+    text === "true" ||
+    text === "false" ||
+    text === "null"
+  );
+}
+
 function isQuotedString(text: string): boolean {
   return (
     (text.startsWith('"') && text.endsWith('"')) ||
@@ -456,6 +490,10 @@ export function parseForOfStatement(
     return undefined;
   }
 
+  if (!isJsonPathExpression(expression)) {
+    return undefined;
+  }
+
   const iterable = expression.getText();
 
   return { variable, iterable };
@@ -475,6 +513,14 @@ export function parseCondition(expr: Expression): {
     const right = expr.getRight();
     const op = expr.getOperatorToken().getText();
 
+    if (!isJsonPathExpression(left)) {
+      return undefined;
+    }
+
+    if (!isJsonPathExpression(right) && !isLiteralExpression(right)) {
+      return undefined;
+    }
+
     const leftText = left.getText();
     const rightText = right.getText();
 
@@ -483,10 +529,10 @@ export function parseCondition(expr: Expression): {
     let value: unknown = rightText;
 
     // Check if right-hand side is an identifier (variable reference)
-    const isRightIdentifier = Node.isIdentifier(right);
+    const isRightPath = isJsonPathExpression(right);
 
     // Try to parse numeric/boolean values
-    if (!isRightIdentifier) {
+    if (!isRightPath) {
       if (rightText === "true") value = true;
       else if (rightText === "false") value = false;
       else if (rightText === "null") value = null;
@@ -499,7 +545,7 @@ export function parseCondition(expr: Expression): {
     switch (op) {
       case "===":
       case "==":
-        if (isRightIdentifier) {
+        if (isRightPath) {
           operator = "StringEqualsPath";
           value = `$.${rightText}`;
         } else if (typeof value === "string") operator = "StringEquals";
@@ -510,7 +556,7 @@ export function parseCondition(expr: Expression): {
         break;
       case "!==":
       case "!=":
-        if (isRightIdentifier) {
+        if (isRightPath) {
           operator = "StringNotEqualsPath";
           value = `$.${rightText}`;
         } else if (typeof value === "number") operator = "NumericNotEquals";
@@ -518,19 +564,19 @@ export function parseCondition(expr: Expression): {
         else operator = "StringNotEquals";
         break;
       case ">":
-        if (isRightIdentifier) { operator = "NumericGreaterThanPath"; value = `$.${rightText}`; }
+        if (isRightPath) { operator = "NumericGreaterThanPath"; value = `$.${rightText}`; }
         else operator = "NumericGreaterThan";
         break;
       case "<":
-        if (isRightIdentifier) { operator = "NumericLessThanPath"; value = `$.${rightText}`; }
+        if (isRightPath) { operator = "NumericLessThanPath"; value = `$.${rightText}`; }
         else operator = "NumericLessThan";
         break;
       case ">=":
-        if (isRightIdentifier) { operator = "NumericGreaterThanEqualsPath"; value = `$.${rightText}`; }
+        if (isRightPath) { operator = "NumericGreaterThanEqualsPath"; value = `$.${rightText}`; }
         else operator = "NumericGreaterThanEquals";
         break;
       case "<=":
-        if (isRightIdentifier) { operator = "NumericLessThanEqualsPath"; value = `$.${rightText}`; }
+        if (isRightPath) { operator = "NumericLessThanEqualsPath"; value = `$.${rightText}`; }
         else operator = "NumericLessThanEquals";
         break;
       default:
@@ -623,7 +669,22 @@ function isClientInitializer(node: Node): boolean {
     return false;
   }
 
-  return node.getExpression().getText().endsWith("Client");
+  const expression = node.getExpression();
+  if (!Node.isIdentifier(expression) || !expression.getText().endsWith("Client")) {
+    return false;
+  }
+
+  const clientName = expression.getText();
+  return node.getSourceFile().getImportDeclarations().some((declaration) => {
+    if (!declaration.getModuleSpecifierValue().startsWith("@aws-sdk/client-")) {
+      return false;
+    }
+
+    return declaration.getNamedImports().some((namedImport) => {
+      const localName = namedImport.getAliasNode()?.getText() ?? namedImport.getName();
+      return localName === clientName;
+    });
+  });
 }
 
 function unwrapAwait(node: Node): Node {
@@ -667,7 +728,8 @@ function getPromiseAllMapCallback(call: CallExpression): Node | undefined {
 function isSupportedPromiseAll(
   call: CallExpression,
   registry: PluginRegistry,
-  inspectStatement: (statement: Statement) => void
+  inspectStatement: (statement: Statement) => void,
+  inspectTaskCall: (taskCall: CallExpression) => void
 ): boolean {
   const array = getPromiseAllArray(call);
   if (array) {
@@ -675,7 +737,11 @@ function isSupportedPromiseAll(
       array.getElements().length > 0 &&
       array.getElements().every((element) => {
         const inner = unwrapAwait(element);
-        return Node.isCallExpression(inner) && isSupportedTaskCall(inner, registry);
+        if (!Node.isCallExpression(inner) || !isSupportedTaskCall(inner, registry)) {
+          return false;
+        }
+        inspectTaskCall(inner);
+        return true;
       })
     );
   }
@@ -693,7 +759,11 @@ function isSupportedPromiseAll(
   }
 
   const inner = unwrapAwait(callbackBody);
-  return Node.isCallExpression(inner) && isSupportedTaskCall(inner, registry);
+  if (!Node.isCallExpression(inner) || !isSupportedTaskCall(inner, registry)) {
+    return false;
+  }
+  inspectTaskCall(inner);
+  return true;
 }
 
 function getUnsupportedExpressionMessage(expr: Expression): string {
@@ -724,6 +794,78 @@ function getUnsupportedExpressionMessage(expr: Expression): string {
   return `未対応の式です: ${expr.getKindName()}`;
 }
 
+function inspectTaskInput(
+  node: Node,
+  addDiag: (level: Diagnostic["level"], message: string, node?: Node) => void
+): void {
+  const current = unwrapParens(node);
+
+  if (
+    isJsonPathExpression(current) ||
+    isLiteralExpression(current) ||
+    !isNaN(Number(current.getText()))
+  ) {
+    return;
+  }
+
+  if (Node.isObjectLiteralExpression(current)) {
+    for (const property of current.getProperties()) {
+      if (Node.isPropertyAssignment(property)) {
+        const initializer = property.getInitializer();
+        if (initializer) {
+          inspectTaskInput(initializer, addDiag);
+        }
+      } else if (!Node.isShorthandPropertyAssignment(property)) {
+        addDiag(
+          "error",
+          `未対応のTask入力プロパティです: ${property.getKindName()}`,
+          property
+        );
+      }
+    }
+    return;
+  }
+
+  if (Node.isArrayLiteralExpression(current)) {
+    for (const element of current.getElements()) {
+      inspectTaskInput(element, addDiag);
+    }
+    return;
+  }
+
+  addDiag(
+    "error",
+    Node.isExpression(current)
+      ? getUnsupportedExpressionMessage(current)
+      : `未対応のTask入力です: ${current.getKindName()}`,
+    current
+  );
+}
+
+function inspectTaskCallInputs(
+  call: CallExpression,
+  registry: PluginRegistry,
+  addDiag: (level: Diagnostic["level"], message: string, node?: Node) => void
+): void {
+  if (parseSdkCall(call, registry)) {
+    const command = call.getArguments()[0];
+    if (command && Node.isNewExpression(command)) {
+      for (const argument of command.getArguments()) {
+        inspectTaskInput(argument, addDiag);
+      }
+    }
+    return;
+  }
+
+  const args = call.getArguments();
+  for (const argument of args) {
+    if (Node.isArrowFunction(argument) || Node.isFunctionExpression(argument)) {
+      continue;
+    }
+    inspectTaskInput(argument, addDiag);
+  }
+}
+
 function detectUnsupportedSyntax(
   sf: SourceFile,
   registry: PluginRegistry,
@@ -747,10 +889,19 @@ function detectUnsupportedSyntax(
       }
 
       if (isSupportedTaskCall(inner, registry)) {
+        inspectTaskCallInputs(inner, registry, addDiag);
         return true;
       }
 
-      if (isPromiseAll(inner) && isSupportedPromiseAll(inner, registry, inspectStatement)) {
+      if (
+        isPromiseAll(inner) &&
+        isSupportedPromiseAll(
+          inner,
+          registry,
+          inspectStatement,
+          (taskCall) => inspectTaskCallInputs(taskCall, registry, addDiag)
+        )
+      ) {
         return true;
       }
 
@@ -760,12 +911,18 @@ function detectUnsupportedSyntax(
 
     if (Node.isCallExpression(current)) {
       if (isSupportedTaskCall(current, registry)) {
+        inspectTaskCallInputs(current, registry, addDiag);
         return true;
       }
 
       if (
         isPromiseAll(current) &&
-        isSupportedPromiseAll(current, registry, inspectStatement)
+        isSupportedPromiseAll(
+          current,
+          registry,
+          inspectStatement,
+          (taskCall) => inspectTaskCallInputs(taskCall, registry, addDiag)
+        )
       ) {
         return true;
       }
@@ -973,6 +1130,14 @@ export function runDetectors(
 
   const targetFunction = findTargetFunction(sf, functionName);
   const detectorRoot = targetFunction?.getBody();
+
+  if (!targetFunction) {
+    addDiag(
+      "error",
+      `変換対象の関数が見つかりません${functionName ? `: ${functionName}` : ""}`,
+      sf
+    );
+  }
 
   detectorRoot?.forEachDescendant((node) => {
 
