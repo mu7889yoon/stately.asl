@@ -262,20 +262,18 @@ export function parseSdkCall(
     return undefined;
   }
 
-  // Find the plugin for this service
+  // Built-in/custom plugins can override service names and operation mapping.
+  // Otherwise, fall back to the Step Functions generic AWS SDK integration ARN.
   const plugin = registry.getByService(serviceName);
-  if (!plugin) {
-    return undefined;
-  }
 
   // Determine the operation: check overrides first, then derive
-  const operation = plugin.overrides?.[commandName] ?? deriveAslOperation(commandName);
+  const operation = plugin?.overrides?.[commandName] ?? deriveAslOperation(commandName);
 
   const ctorArgs = newExpr.getArguments();
   const params = ctorArgs.length > 0 ? extractObjectParams(ctorArgs[0]) : {};
 
   return {
-    service: plugin.serviceName,
+    service: plugin?.serviceName ?? serviceName,
     operation,
     commandName,
     params,
