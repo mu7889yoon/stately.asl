@@ -66,14 +66,20 @@ describe("unsupported syntax compatibility diagnostics", () => {
           message: "SDK Command の引数はオブジェクトリテラルのみ対応です",
         }),
         expect.objectContaining({
-          message: "Task入力配列の動的な要素は未対応です",
+          message: "Task入力の配列は未対応です",
         }),
+        expect.objectContaining({ message: "オプショナルチェーンは未対応です" }),
         expect.objectContaining({
           message: "未対応の関数呼び出しです: getItems()",
         }),
         expect.objectContaining({
           message: "https.request のオプションはオブジェクトリテラルのみ対応です",
         }),
+        expect.objectContaining({
+          level: "warning",
+          message: "https.request の未対応オプションは無視されます: timeout",
+        }),
+        expect.objectContaining({ message: "空の catch ブロックは未対応です" }),
         expect.objectContaining({
           message: "未対応の関数呼び出しです: getEndpoint()",
         }),

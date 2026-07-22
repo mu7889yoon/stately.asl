@@ -11,6 +11,7 @@ export async function handler(
   Item: Record<string, unknown>,
   input: Record<string, unknown>,
   requestOptions: Record<string, unknown>,
+  optionalPayload: { item: Record<string, unknown> } | undefined,
   items: Record<string, unknown>[],
   count: number,
   threshold: number,
@@ -26,6 +27,9 @@ export async function handler(
   await client.send(new PutItemCommand(input));
   await client.send(
     new PutItemCommand({ TableName, Item, Entries: [Item] }),
+  );
+  await client.send(
+    new PutItemCommand({ TableName, Item: optionalPayload?.item }),
   );
 
   if (count + 1 === 2) {
@@ -50,6 +54,13 @@ export async function handler(
     ),
   );
   https.request("https://example.com", requestOptions);
+  https.request("https://example.com", { method: "POST", timeout: 1000 });
+
+  try {
+    await client.send(new PutItemCommand({ TableName, Item }));
+  } catch {
+    // Intentionally empty to verify compatibility diagnostics.
+  }
 
   let _current;
   _current = count;

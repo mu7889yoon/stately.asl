@@ -37,7 +37,6 @@ const SUPPORTED_FETCH_INIT_KEYS = new Set(["method", "headers", "body"]);
 const SERIALIZED_CHOICE_OPERATORS = new Set([
   "StringEquals",
   "StringEqualsPath",
-  "StringNotEquals",
   "NumericEquals",
   "NumericGreaterThan",
   "NumericLessThan",
@@ -77,12 +76,16 @@ function isJsonPathExpression(node: Node): boolean {
   }
 
   if (Node.isPropertyAccessExpression(current)) {
-    return isJsonPathExpression(current.getExpression());
+    return (
+      !current.hasQuestionDotToken() &&
+      isJsonPathExpression(current.getExpression())
+    );
   }
 
   if (Node.isElementAccessExpression(current)) {
     const argument = current.getArgumentExpression();
     return (
+      !current.hasQuestionDotToken() &&
       isJsonPathExpression(current.getExpression()) &&
       Boolean(argument && Node.isNumericLiteral(argument))
     );
@@ -547,6 +550,9 @@ export function parseCondition(expr: Expression): {
 
     // Check if right-hand side is an identifier (variable reference)
     const isRightPath = isJsonPathExpression(right);
+    if (isRightPath || op === "!==" || op === "!=") {
+      return undefined;
+    }
 
     // Try to parse numeric/boolean values
     if (!isRightPath) {
@@ -557,6 +563,13 @@ export function parseCondition(expr: Expression): {
       else if (rightText.startsWith('"') || rightText.startsWith("'")) {
         value = rightText.slice(1, -1); // Remove quotes
       }
+    }
+
+    if (
+      [">", "<", ">=", "<="].includes(op) &&
+      typeof value !== "number"
+    ) {
+      return undefined;
     }
 
     switch (op) {
@@ -800,6 +813,13 @@ function isSupportedPromiseAll(
 }
 
 function getUnsupportedExpressionMessage(expr: Expression): string {
+  if (
+    (Node.isPropertyAccessExpression(expr) || Node.isElementAccessExpression(expr)) &&
+    expr.hasQuestionDotToken()
+  ) {
+    return "オプショナルチェーンは未対応です";
+  }
+
   if (Node.isCallExpression(expr)) {
     return `未対応の関数呼び出しです: ${expr.getExpression().getText()}()`;
   }
@@ -829,8 +849,7 @@ function getUnsupportedExpressionMessage(expr: Expression): string {
 
 function inspectTaskInput(
   node: Node,
-  addDiag: (level: Diagnostic["level"], message: string, node?: Node) => void,
-  allowJsonPath = true
+  addDiag: (level: Diagnostic["level"], message: string, node?: Node) => void
 ): void {
   const current = unwrapParens(node);
 
@@ -843,9 +862,6 @@ function inspectTaskInput(
 
 
   if (isJsonPathExpression(current)) {
-    if (!allowJsonPath) {
-      addDiag("error", "Task入力配列の動的な要素は未対応です", current);
-    }
     return;
   }
 
@@ -854,7 +870,7 @@ function inspectTaskInput(
       if (Node.isPropertyAssignment(property)) {
         const initializer = property.getInitializer();
         if (initializer) {
-          inspectTaskInput(initializer, addDiag, allowJsonPath);
+          inspectTaskInput(initializer, addDiag);
         }
       } else if (!Node.isShorthandPropertyAssignment(property)) {
         addDiag(
@@ -868,9 +884,7 @@ function inspectTaskInput(
   }
 
   if (Node.isArrayLiteralExpression(current)) {
-    for (const element of current.getElements()) {
-      inspectTaskInput(element, addDiag, false);
-    }
+    addDiag("error", "Task入力の配列は未対応です", current);
     return;
   }
 
@@ -911,6 +925,7 @@ function inspectTaskCallInputs(
     Node.isPropertyAccessExpression(expression) &&
     expression.getExpression().getText() === "https" &&
     expression.getName() === "request";
+  const unwrappedOptions = args[1] ? unwrapParens(args[1]) : undefined;
 
   for (const argument of args) {
     if (Node.isArrowFunction(argument) || Node.isFunctionExpression(argument)) {
@@ -923,7 +938,7 @@ function inspectTaskCallInputs(
   if (
     isHttpsRequest &&
     options &&
-    !Node.isObjectLiteralExpression(unwrapParens(options)) &&
+    !Node.isObjectLiteralExpression(unwrappedOptions) &&
     !Node.isArrowFunction(options) &&
     !Node.isFunctionExpression(options)
   ) {
@@ -932,6 +947,29 @@ function inspectTaskCallInputs(
       "https.request のオプションはオブジェクトリテラルのみ対応です",
       options
     );
+  } else if (
+    isHttpsRequest &&
+    options &&
+    Node.isObjectLiteralExpression(unwrappedOptions)
+  ) {
+    const unsupportedKeys = unwrappedOptions.getProperties().flatMap((property) => {
+      if (
+        Node.isPropertyAssignment(property) ||
+        Node.isShorthandPropertyAssignment(property)
+      ) {
+        const name = normalizePropertyName(property.getName());
+        return SUPPORTED_FETCH_INIT_KEYS.has(name) ? [] : [name];
+      }
+      return ["<computed>"];
+    });
+
+    if (unsupportedKeys.length > 0) {
+      addDiag(
+        "warning",
+        `https.request の未対応オプションは無視されます: ${unsupportedKeys.join(", ")}`,
+        options
+      );
+    }
   }
 }
 
@@ -1077,7 +1115,11 @@ function detectUnsupportedSyntax(
       }
       const catchClause = statement.getCatchClause();
       if (catchClause) {
-        for (const child of catchClause.getBlock().getStatements()) {
+        const catchStatements = catchClause.getBlock().getStatements();
+        if (catchStatements.length === 0) {
+          addDiag("error", "空の catch ブロックは未対応です", catchClause);
+        }
+        for (const child of catchStatements) {
           inspectStatement(child);
         }
       }
