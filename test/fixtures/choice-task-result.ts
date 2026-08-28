@@ -44,4 +44,12 @@ export async function handler(
   if (String(result.Item?.code?.N) === "42") {
     await client.send(new PutItemCommand({ TableName, Item }));
   }
+
+  if (result.Item?.left?.S === result.Item?.right?.S) {
+    await client.send(new PutItemCommand({ TableName, Item }));
+  }
+
+  if (result.Item?.left?.S !== result.Item?.right?.S) {
+    await client.send(new PutItemCommand({ TableName, Item }));
+  }
 }

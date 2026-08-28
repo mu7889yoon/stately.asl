@@ -176,7 +176,9 @@ function optionalReferences(
     case "Not":
       return optionalReferences(expression.operand);
     case "Call":
-      return expression.arguments.flatMap(optionalReferences);
+      return expression.function === "String"
+        ? []
+        : expression.arguments.flatMap(optionalReferences);
     default:
       return [];
   }
@@ -244,6 +246,23 @@ function comparisonToJsonata(
     }
   }
 
+  if (
+    expression.left.kind === "Reference" &&
+    expression.left.optional &&
+    expression.right.kind === "Reference" &&
+    expression.right.optional &&
+    (expression.operator === "===" || expression.operator === "!==")
+  ) {
+    const left = referenceToJsonata(expression.left, ctx);
+    const right = referenceToJsonata(expression.right, ctx);
+    const leftExists = `$exists(${left})`;
+    const rightExists = `$exists(${right})`;
+    if (expression.operator === "===") {
+      return `(($not(${leftExists}) and $not(${rightExists})) or (${leftExists} and ${rightExists} and ${left} = ${right}))`;
+    }
+    return `((${leftExists} and $not(${rightExists})) or ($not(${leftExists}) and ${rightExists}) or (${leftExists} and ${rightExists} and ${left} != ${right}))`;
+  }
+
   const left = expressionToJsonata(expression.left, ctx);
   const right = expressionToJsonata(expression.right, ctx);
   const operator =
@@ -292,6 +311,15 @@ function expressionToJsonata(
       const args = expression.arguments
         .map((argument) => expressionToJsonata(argument, ctx))
         .join(", ");
+      if (expression.function === "String" && expression.arguments[0]) {
+        const paths = uniqueOptionalPaths(expression.arguments[0], ctx);
+        if (paths.length > 0) {
+          const allExist = paths
+            .map((path) => `$exists(${path})`)
+            .join(" and ");
+          return `(${allExist} ? ${functionName}(${args}) : "undefined")`;
+        }
+      }
       return `${functionName}(${args})`;
     }
   }
