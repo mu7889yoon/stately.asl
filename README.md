@@ -13,7 +13,6 @@ AWS Step Functionsのワークフローを、慣れ親しんだTypeScriptの構�
 - JSONataを使ったASLを生成
 - 型安全な開発体験
 
-
 ## インストール
 
 ### ローカル開発
@@ -49,7 +48,6 @@ stately --version
 stately transpile <file.ts>
 ```
 
-
 ## クイックスタート
 
 ### 基本的な使い方
@@ -70,14 +68,14 @@ stately transpile handler.ts --pretty --validate
 
 ### CLIオプション
 
-| オプション | 説明 |
-|-----------|------|
-| `-o, --out <path>` | 出力ファイルパス |
+| オプション              | 説明                                   |
+| ----------------------- | -------------------------------------- |
+| `-o, --out <path>`      | 出力ファイルパス                       |
 | `-f, --function <name>` | ターゲット関数名（複数関数がある場合） |
-| `-p, --pretty` | JSONを整形出力 |
-| `--no-retry` | デフォルトのRetry設定を無効化 |
-| `--validate` | AWS CLIでASLを検証（aws CLIが必要） |
-| `--ir` | ASLの代わりに中間表現（IR）を出力 |
+| `-p, --pretty`          | JSONを整形出力                         |
+| `--no-retry`            | デフォルトのRetry設定を無効化          |
+| `--validate`            | AWS CLIでASLを検証（aws CLIが必要）    |
+| `--ir`                  | ASLの代わりに中間表現（IR）を出力      |
 
 ### 解析コマンド
 
@@ -91,9 +89,17 @@ stately analyze handler.ts
 ### 入力（TypeScript）
 
 ```typescript
-import { DynamoDBClient, PutItemCommand, GetItemCommand } from "@aws-sdk/client-dynamodb";
+import {
+  DynamoDBClient,
+  PutItemCommand,
+  GetItemCommand,
+} from "@aws-sdk/client-dynamodb";
 
-export async function handler(TableName: string, Key: Record<string, any>, Item: Record<string, any>) {
+export async function handler(
+  TableName: string,
+  Key: Record<string, any>,
+  Item: Record<string, any>,
+) {
   const client = new DynamoDBClient({});
 
   // アイテムを保存
@@ -153,30 +159,29 @@ export async function handler(TableName: string, Key: Record<string, any>, Item:
 }
 ```
 
-
 ## 対応サービス
 
 現在、以下のAWSサービスのSDK呼び出しをサポートしています：
 
-| サービス | 対応オペレーション |
-|---------|-------------------|
+| サービス | 対応オペレーション                                                                  |
+| -------- | ----------------------------------------------------------------------------------- |
 | DynamoDB | PutItem, GetItem, UpdateItem, DeleteItem, Query, Scan, BatchWriteItem, BatchGetItem |
-| S3 | GetObject, PutObject, DeleteObject, CopyObject, ListObjectsV2 |
-| SQS | SendMessage, ReceiveMessage, DeleteMessage |
-| SNS | Publish |
-| HTTP | `https.get`, `https.request`, `fetch(url, init)` |
+| S3       | GetObject, PutObject, DeleteObject, CopyObject, ListObjectsV2                       |
+| SQS      | SendMessage, ReceiveMessage, DeleteMessage                                          |
+| SNS      | Publish                                                                             |
+| HTTP     | `https.get`, `https.request`, `fetch(url, init)`                                    |
 
 ## 対応構文
 
 TypeScriptの構文がASLの状態に以下のようにマッピングされます：
 
-| TypeScript構文 | ASL状態 | 説明 |
-|---------------|---------|------|
-| `await` (直列) | Task | SDK呼び出しを順次実行 |
-| `Promise.all([...])` | Parallel | 複数の操作を並列実行 |
-| `for...of` | Map | 配列の各要素に対して処理を実行 |
-| `if/else` | Choice | 条件分岐 |
-| `try/catch` | Catch | エラーハンドリング |
+| TypeScript構文       | ASL状態  | 説明                           |
+| -------------------- | -------- | ------------------------------ |
+| `await` (直列)       | Task     | SDK呼び出しを順次実行          |
+| `Promise.all([...])` | Parallel | 複数の操作を並列実行           |
+| `for...of`           | Map      | 配列の各要素に対して処理を実行 |
+| `if/else`            | Choice   | 条件分岐                       |
+| `try/catch`          | Catch    | エラーハンドリング             |
 
 ### 並列処理の例
 
@@ -196,6 +201,34 @@ for (const item of items) {
   await client.send(new PutItemCommand({ TableName, Item: item }));
 }
 ```
+
+### Task結果を使った条件分岐
+
+AWS SDK の戻り値を変数へ代入すると、後続の `if/else` から Task 結果を参照できます。
+
+```typescript
+const result = await client.send(new GetItemCommand({ TableName, Key }));
+
+if (
+  result.Item?.status?.S === "ACTIVE" &&
+  Number(result.Item?.expiresAt?.N) <= Date.now()
+) {
+  await client.send(new DeleteItemCommand({ TableName, Key }));
+}
+```
+
+Optional Chaining は JSONata の `$exists()` へ変換されます。`!==` や `!` を使う場合も、参照先が存在しないときの JavaScript の評価結果を維持します。
+
+条件内では、比較演算子、`&&`、`||`、`!`、括弧、および次の関数を使用できます。
+
+| TypeScript          | JSONata            |
+| ------------------- | ------------------ |
+| `Date.now()`        | `$millis()`        |
+| `Date.parse(value)` | `$toMillis(value)` |
+| `Number(value)`     | `$number(value)`   |
+| `String(value)`     | `$string(value)`   |
+
+Task、Parallel、Map の結果は元入力へ `<stateId>Result` としてマージされるため、後続の Choice から以前の入力と実行結果を参照できます。
 
 ### エラーハンドリングの例
 
@@ -219,7 +252,6 @@ await fetch(endpoint, {
 });
 ```
 
-
 ## プログラマティックAPI
 
 CLIを使わず、コードから直接statelyを使用できます。
@@ -229,18 +261,18 @@ CLIを使わず、コードから直接statelyを使用できます。
 TypeScriptファイルをASLに変換します。
 
 ```typescript
-import { transpile } from 'stately';
+import { transpile } from "stately";
 
 const result = await transpile({
-  entry: 'src/handler.ts',      // 入力ファイルパス
-  functionName: 'handler',       // ターゲット関数名（オプション）
-  includeRetry: true,            // Retry設定を含める（デフォルト: true）
+  entry: "src/handler.ts", // 入力ファイルパス
+  functionName: "handler", // ターゲット関数名（オプション）
+  includeRetry: true, // Retry設定を含める（デフォルト: true）
 });
 
 // 結果
-console.log(result.ok);          // 変換成功かどうか
-console.log(result.asl);         // ASL State Machine
-console.log(result.ir);          // 中間表現
+console.log(result.ok); // 変換成功かどうか
+console.log(result.asl); // ASL State Machine
+console.log(result.ir); // 中間表現
 console.log(result.diagnostics); // 警告・エラー
 ```
 
@@ -252,16 +284,16 @@ console.log(result.diagnostics); // 警告・エラー
 TypeScriptファイルを解析し、Step Functions互換性をチェックします。
 
 ```typescript
-import { analyze } from 'stately';
+import { analyze } from "stately";
 
 const result = await analyze({
-  entry: 'src/handler.ts',
-  functionName: 'handler',  // オプション
+  entry: "src/handler.ts",
+  functionName: "handler", // オプション
 });
 
-console.log(result.ok);          // 解析成功かどうか
+console.log(result.ok); // 解析成功かどうか
 console.log(result.diagnostics); // 警告・エラー
-console.log(result.metrics);     // メトリクス（SDK呼び出し数など）
+console.log(result.metrics); // メトリクス（SDK呼び出し数など）
 ```
 
 ### 型定義
@@ -274,10 +306,10 @@ import type {
   TranspileResult,
   ASLStateMachine,
   IR,
+  ChoiceExpression,
   Diagnostic,
-} from 'stately';
+} from "stately";
 ```
-
 
 ## 制約事項
 
@@ -296,7 +328,9 @@ statelyはStep Functionsの制約に合わせて設計されているため、�
 
 - 生成するASLは `QueryLanguage: "JSONata"` を使用します
 - 動的なパラメータは `{"Key": "{% $states.input.Key %}"}` 形式で生成されます
-- 複雑な式や計算はサポートされていません
+- Task入力における複雑な式や計算はサポートされていません
+- Choice条件内のユーザー定義関数、任意のメソッド呼び出し、`new Date()`、動的な配列添字はサポートされていません
+- Task結果の分割代入、ローカル変数への再代入、分岐内で宣言した変数の分岐外参照はサポートされていません
 - リテラル値は直接埋め込まれます
 - `fetch` は `fetch(url)` と `fetch(url, { method, headers, body })` の基本形をサポートします
 - `fetch(...).json()` は `return await (await fetch(...)).json()` のような終端の直結形のみサポートします

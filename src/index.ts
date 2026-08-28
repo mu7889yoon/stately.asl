@@ -19,8 +19,16 @@ export type {
   CFGFail,
   CFGSucceed,
   CFGWait,
-  ChoiceCondition,
-  ChoiceOperator,
+  ChoiceExpression,
+  ChoiceLiteralExpression,
+  ChoiceUndefinedExpression,
+  ChoiceReferenceExpression,
+  ChoiceComparisonOperator,
+  ChoiceComparisonExpression,
+  ChoiceLogicalExpression,
+  ChoiceNotExpression,
+  ChoiceBuiltinFunction,
+  ChoiceCallExpression,
 
   // IR types
   IR,

@@ -24,6 +24,7 @@ export interface CFGTask {
   operation: string; // e.g., "putItem", "getObject"
   params: Record<string, unknown>;
   outputMode?: "responseBody";
+  resultVariable?: string;
   sourceText?: string;
 }
 
@@ -41,7 +42,7 @@ export interface CFGMap {
 
 export interface CFGChoice {
   kind: "Choice";
-  condition: ChoiceCondition;
+  condition: ChoiceExpression;
   thenBranch: CFGSequence;
   elseBranch?: CFGSequence;
 }
@@ -90,35 +91,71 @@ export interface CFGSequence {
   nodes: CFGNode[];
 }
 
-export interface ChoiceCondition {
-  variable: string;
-  operator: ChoiceOperator;
-  value: unknown;
+export type ChoiceExpression =
+  | ChoiceLiteralExpression
+  | ChoiceUndefinedExpression
+  | ChoiceReferenceExpression
+  | ChoiceComparisonExpression
+  | ChoiceLogicalExpression
+  | ChoiceNotExpression
+  | ChoiceCallExpression;
+
+export interface ChoiceLiteralExpression {
+  kind: "Literal";
+  value: string | number | boolean | null;
 }
 
-export type ChoiceOperator =
-  | "StringEquals"
-  | "StringEqualsPath"
-  | "StringNotEquals"
-  | "StringNotEqualsPath"
-  | "NumericEquals"
-  | "NumericNotEquals"
-  | "NumericGreaterThan"
-  | "NumericGreaterThanPath"
-  | "NumericLessThan"
-  | "NumericLessThanPath"
-  | "NumericGreaterThanEquals"
-  | "NumericGreaterThanEqualsPath"
-  | "NumericLessThanEquals"
-  | "NumericLessThanEqualsPath"
-  | "BooleanEquals"
-  | "BooleanEqualsPath"
-  | "BooleanNotEquals"
-  | "IsNull"
-  | "IsPresent"
-  | "IsString"
-  | "IsNumeric"
-  | "IsBoolean";
+export interface ChoiceUndefinedExpression {
+  kind: "Undefined";
+}
+
+export interface ChoiceReferenceExpression {
+  kind: "Reference";
+  root: string;
+  path: Array<string | number>;
+  optional: boolean;
+}
+
+export type ChoiceComparisonOperator =
+  | "==="
+  | "!=="
+  | "=="
+  | "!="
+  | "<"
+  | "<="
+  | ">"
+  | ">=";
+
+export interface ChoiceComparisonExpression {
+  kind: "Comparison";
+  operator: ChoiceComparisonOperator;
+  left: ChoiceExpression;
+  right: ChoiceExpression;
+}
+
+export interface ChoiceLogicalExpression {
+  kind: "Logical";
+  operator: "&&" | "||";
+  left: ChoiceExpression;
+  right: ChoiceExpression;
+}
+
+export interface ChoiceNotExpression {
+  kind: "Not";
+  operand: ChoiceExpression;
+}
+
+export type ChoiceBuiltinFunction =
+  | "Date.now"
+  | "Date.parse"
+  | "Number"
+  | "String";
+
+export interface ChoiceCallExpression {
+  kind: "Call";
+  function: ChoiceBuiltinFunction;
+  arguments: ChoiceExpression[];
+}
 
 // ============================================================================
 // IR (Intermediate Representation) Types
@@ -143,6 +180,7 @@ export interface IRParallel {
   kind: "Parallel";
   id: string;
   branches: IR[];
+  output?: JsonExpr;
   retry?: RetryConfig[];
   catch?: CatchConfig[];
   next?: string;
@@ -155,6 +193,7 @@ export interface IRMap {
   items: JsonExpr;
   itemSelector?: JsonExpr;
   itemProcessor: IR;
+  output?: JsonExpr;
   maxConcurrency?: number;
   retry?: RetryConfig[];
   catch?: CatchConfig[];

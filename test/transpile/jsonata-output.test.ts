@@ -74,6 +74,9 @@ describe("JSONata ASL output", () => {
       expect(
         parallel.Branches.every((branch) => branch.QueryLanguage === "JSONata"),
       ).toBe(true);
+      expect(parallel.Output).toBe(
+        '{% $merge([$states.input, {"Parallel_1Result": $states.result}]) %}',
+      );
     }
 
     expect(map?.Type).toBe("Map");
@@ -83,6 +86,9 @@ describe("JSONata ASL output", () => {
         '{% $merge([$states.input, {"Item": $states.context.Map.Item.Value}]) %}',
       );
       expect(map.ItemProcessor?.ProcessorConfig).toEqual({ Mode: "INLINE" });
+      expect(map.Output).toBe(
+        '{% $merge([$states.input, {"Map_1Result": $states.result}]) %}',
+      );
     }
 
     expect(choice?.Type).toBe("Choice");

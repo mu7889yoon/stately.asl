@@ -60,7 +60,9 @@ describe("unsupported syntax compatibility diagnostics", () => {
         expect.objectContaining({
           message: "未対応の関数呼び出しです: normalize()",
         }),
-        expect.objectContaining({ message: "未対応の if 条件式です" }),
+        expect.objectContaining({
+          message: expect.stringContaining("未対応の if 条件式です"),
+        }),
         expect.objectContaining({ message: "未対応の for...of 文です" }),
         expect.objectContaining({
           message: "SDK Command の引数はオブジェクトリテラルのみ対応です",
@@ -68,12 +70,15 @@ describe("unsupported syntax compatibility diagnostics", () => {
         expect.objectContaining({
           message: "Task入力の配列は未対応です",
         }),
-        expect.objectContaining({ message: "オプショナルチェーンは未対応です" }),
+        expect.objectContaining({
+          message: "オプショナルチェーンは未対応です",
+        }),
         expect.objectContaining({
           message: "未対応の関数呼び出しです: getItems()",
         }),
         expect.objectContaining({
-          message: "https.request のオプションはオブジェクトリテラルのみ対応です",
+          message:
+            "https.request のオプションはオブジェクトリテラルのみ対応です",
         }),
         expect.objectContaining({
           level: "warning",
@@ -91,10 +96,10 @@ describe("unsupported syntax compatibility diagnostics", () => {
     );
 
     expect(
-      result.diagnostics.filter(
-        (diagnostic) => diagnostic.message === "未対応の if 条件式です",
+      result.diagnostics.filter((diagnostic) =>
+        diagnostic.message.startsWith("未対応の if 条件式です"),
       ),
-    ).toHaveLength(3);
+    ).toHaveLength(1);
   });
 
   it("fails analysis when the selected function does not exist", async () => {
