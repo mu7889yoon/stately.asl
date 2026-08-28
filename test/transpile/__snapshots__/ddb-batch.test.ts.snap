@@ -37,6 +37,7 @@ exports[`transpile ddb-batch > produces Parallel/Map/Catch-like 1`] = `
       "ItemSelector": "{% $merge([$states.input, {"Item": $states.context.Map.Item.Value}]) %}",
       "Items": "{% $states.input.items %}",
       "Next": "putItem_3",
+      "Output": "{% $merge([$states.input, {"Map_1Result": $states.result}]) %}",
       "Type": "Map",
     },
     "Parallel_1": {
@@ -69,6 +70,7 @@ exports[`transpile ddb-batch > produces Parallel/Map/Catch-like 1`] = `
         },
       ],
       "Next": "Map_1",
+      "Output": "{% $merge([$states.input, {"Parallel_1Result": $states.result}]) %}",
       "Type": "Parallel",
     },
     "Pass_1": {
