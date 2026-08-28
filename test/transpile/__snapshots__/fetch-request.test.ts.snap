@@ -2,16 +2,17 @@
 
 exports[`transpile fetch-request > produces ASL Task for fetch GET 1`] = `
 {
+  "QueryLanguage": "JSONata",
   "StartAt": "invoke_1",
   "States": {
     "invoke_1": {
-      "End": true,
-      "Parameters": {
-        "ApiEndpoint.$": "$.endpoint",
+      "Arguments": {
+        "ApiEndpoint": "{% $states.input.endpoint %}",
         "Method": "GET",
       },
+      "End": true,
+      "Output": "{% $merge([$states.input, {"invoke_1Result": $states.result}]) %}",
       "Resource": "arn:aws:states:::http:invoke",
-      "ResultPath": "$.invoke_1Result",
       "Retry": [
         {
           "BackoffRate": 2,
@@ -30,20 +31,21 @@ exports[`transpile fetch-request > produces ASL Task for fetch GET 1`] = `
 
 exports[`transpile fetch-request > produces ASL Task for fetch POST with body 1`] = `
 {
+  "QueryLanguage": "JSONata",
   "StartAt": "invoke_1",
   "States": {
     "invoke_1": {
-      "End": true,
-      "Parameters": {
-        "ApiEndpoint.$": "$.apiUrl",
+      "Arguments": {
+        "ApiEndpoint": "{% $states.input.apiUrl %}",
         "Headers": {
           "Content-Type": "application/json",
         },
         "Method": "POST",
-        "RequestBody.$": "$.payload",
+        "RequestBody": "{% $states.input.payload %}",
       },
+      "End": true,
+      "Output": "{% $merge([$states.input, {"invoke_1Result": $states.result}]) %}",
       "Resource": "arn:aws:states:::http:invoke",
-      "ResultPath": "$.invoke_1Result",
       "Retry": [
         {
           "BackoffRate": 2,
@@ -60,17 +62,18 @@ exports[`transpile fetch-request > produces ASL Task for fetch POST with body 1`
 }
 `;
 
-exports[`transpile fetch-request > uses OutputPath for terminal fetch json 1`] = `
+exports[`transpile fetch-request > uses JSONata Output for terminal fetch json 1`] = `
 {
+  "QueryLanguage": "JSONata",
   "StartAt": "invoke_1",
   "States": {
     "invoke_1": {
-      "End": true,
-      "OutputPath": "$.ResponseBody",
-      "Parameters": {
-        "ApiEndpoint.$": "$.endpoint",
+      "Arguments": {
+        "ApiEndpoint": "{% $states.input.endpoint %}",
         "Method": "GET",
       },
+      "End": true,
+      "Output": "{% $states.result.ResponseBody %}",
       "Resource": "arn:aws:states:::http:invoke",
       "Retry": [
         {

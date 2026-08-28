@@ -6,6 +6,7 @@ import type {
   CFGMap,
   CFGTry,
   CFGChoice,
+  ChoiceCondition,
   IR,
   IRState,
   IRTask,
@@ -21,7 +22,9 @@ import type {
 /**
  * Check if an IR state can have a "next" property
  */
-function canHaveNext(state: IRState): state is IRTask | IRParallel | IRMap | IRPass | IRWait {
+function canHaveNext(
+  state: IRState,
+): state is IRTask | IRParallel | IRMap | IRPass | IRWait {
   return (
     state.kind === "Task" ||
     state.kind === "Parallel" ||
@@ -36,7 +39,7 @@ function canHaveNext(state: IRState): state is IRTask | IRParallel | IRMap | IRP
  */
 function findTerminalStateIds(
   ir: IR,
-  allStates: Record<string, IRState>
+  allStates: Record<string, IRState>,
 ): string[] {
   return Object.keys(ir.states).filter((id) => {
     const state = allStates[id];
@@ -72,47 +75,113 @@ interface ConvertedNode {
   exit: string;
 }
 
-/**
- * Convert CFG parameters to ASL JSONPath format
- */
-function paramsToJsonPath(params: Record<string, unknown>): JsonExpr {
-  const result: Record<string, unknown> = {};
+function jsonata(expression: string): string {
+  return `{% ${expression} %}`;
+}
 
-  for (const [key, value] of Object.entries(params)) {
-    if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-      // Nested object
-      result[key] = paramsToJsonPath(value as Record<string, unknown>);
-    } else if (typeof value === "string") {
-      // Check if it's already a variable reference or literal
-      if (value.startsWith("$.")) {
-        // Already a JSONPath
-        result[`${key}.$`] = value;
-      } else if (
-        value.startsWith('"') ||
-        value.startsWith("'") ||
-        value === "true" ||
-        value === "false" ||
-        !isNaN(Number(value))
-      ) {
-        // Literal value - use as-is without .$
-        result[key] = JSON.parse(value.replace(/'/g, '"'));
-      } else if (value.match(/^[a-zA-Z_][a-zA-Z0-9_]*$/)) {
-        // Simple identifier - convert to JSONPath
-        result[`${key}.$`] = `$.${value}`;
-      } else if (value.includes("[")) {
-        // Array access like items[0] - convert to JSONPath
-        result[`${key}.$`] = `$.${value.replace(/\[(\d+)\]/g, "[$1]")}`;
-      } else {
-        // Other expressions - try to use as JSONPath
-        result[`${key}.$`] = `$.${value}`;
-      }
-    } else {
-      // Direct value (number, boolean, null)
-      result[key] = value;
-    }
+function inputReference(source: string): string {
+  const path = source.startsWith("$.") ? source.slice(2) : source;
+  return `$states.input.${path}`;
+}
+
+function parseLiteral(source: string): unknown | undefined {
+  if (source === "true") return true;
+  if (source === "false") return false;
+  if (source === "null") return null;
+  if (source !== "" && !Number.isNaN(Number(source))) return Number(source);
+
+  if (source.startsWith('"') && source.endsWith('"')) {
+    return JSON.parse(source);
   }
 
-  return result;
+  if (source.startsWith("'") && source.endsWith("'")) {
+    return source.slice(1, -1).replace(/\\'/g, "'").replace(/\\\\/g, "\\");
+  }
+
+  return undefined;
+}
+
+function valueToJsonata(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(valueToJsonata);
+  }
+
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, nested]) => [
+        key,
+        valueToJsonata(nested),
+      ]),
+    );
+  }
+
+  if (typeof value !== "string") {
+    return value;
+  }
+
+  const literal = parseLiteral(value);
+  return literal !== undefined ? literal : jsonata(inputReference(value));
+}
+
+/** Convert CFG parameters to JSONata Arguments. */
+function paramsToJsonata(params: Record<string, unknown>): JsonExpr {
+  return valueToJsonata(params);
+}
+
+function mergedResultOutput(field: string, resultExpression: string): string {
+  return jsonata(
+    `$merge([$states.input, {${JSON.stringify(field)}: ${resultExpression}}])`,
+  );
+}
+
+function conditionValue(value: unknown): string {
+  if (typeof value === "string" && value.startsWith("$.")) {
+    return inputReference(value);
+  }
+  return JSON.stringify(value);
+}
+
+function conditionToJsonata(condition: ChoiceCondition): string {
+  const left = inputReference(condition.variable);
+  const right = conditionValue(condition.value);
+
+  switch (condition.operator) {
+    case "StringEquals":
+    case "StringEqualsPath":
+    case "NumericEquals":
+    case "BooleanEquals":
+    case "BooleanEqualsPath":
+      return jsonata(`${left} = ${right}`);
+    case "StringNotEquals":
+    case "StringNotEqualsPath":
+    case "NumericNotEquals":
+    case "BooleanNotEquals":
+      return jsonata(`${left} != ${right}`);
+    case "NumericGreaterThan":
+    case "NumericGreaterThanPath":
+      return jsonata(`${left} > ${right}`);
+    case "NumericLessThan":
+    case "NumericLessThanPath":
+      return jsonata(`${left} < ${right}`);
+    case "NumericGreaterThanEquals":
+    case "NumericGreaterThanEqualsPath":
+      return jsonata(`${left} >= ${right}`);
+    case "NumericLessThanEquals":
+    case "NumericLessThanEqualsPath":
+      return jsonata(`${left} <= ${right}`);
+    case "IsNull":
+      return jsonata(`${left} = null`);
+    case "IsPresent":
+      return jsonata(
+        condition.value ? `$exists(${left})` : `not($exists(${left}))`,
+      );
+    case "IsString":
+      return jsonata(`$type(${left}) = "string"`);
+    case "IsNumeric":
+      return jsonata(`$type(${left}) = "number"`);
+    case "IsBoolean":
+      return jsonata(`$type(${left}) = "boolean"`);
+  }
 }
 
 /**
@@ -126,14 +195,21 @@ function taskToIR(task: CFGTask, ctx: IRBuildContext): IRTask {
     id,
     service: task.service,
     operation: task.operation,
-    params: paramsToJsonPath(task.params),
-    resultPath: task.resultPath === null ? undefined : task.resultPath ?? `$.${id}Result`,
-    outputPath: task.outputPath,
+    arguments: paramsToJsonata(task.params),
+    output:
+      task.outputMode === "responseBody"
+        ? jsonata("$states.result.ResponseBody")
+        : mergedResultOutput(`${id}Result`, "$states.result"),
   };
 
   if (ctx.includeRetry) {
     irTask.retry = [
-      { ErrorEquals: ["States.ALL"], IntervalSeconds: 1, MaxAttempts: 3, BackoffRate: 2 },
+      {
+        ErrorEquals: ["States.ALL"],
+        IntervalSeconds: 1,
+        MaxAttempts: 3,
+        BackoffRate: 2,
+      },
     ];
   }
 
@@ -147,7 +223,7 @@ function parallelToIR(parallel: CFGParallel, ctx: IRBuildContext): IRParallel {
   const id = ctx.idGen.generate("Parallel");
 
   const branches: IR[] = parallel.branches.map((branch) =>
-    sequenceToIR(branch, ctx)
+    sequenceToIR(branch, ctx),
   );
 
   return {
@@ -168,8 +244,11 @@ function mapToIR(map: CFGMap, ctx: IRBuildContext): IRMap {
   return {
     kind: "Map",
     id,
-    itemsPath: map.itemsPath,
-    iterator,
+    items: jsonata(inputReference(map.itemsExpression)),
+    itemSelector: map.itemVariable
+      ? mergedResultOutput(map.itemVariable, "$states.context.Map.Item.Value")
+      : undefined,
+    itemProcessor: iterator,
   };
 }
 
@@ -181,7 +260,7 @@ function mapToIR(map: CFGMap, ctx: IRBuildContext): IRMap {
 function tryToIR(
   tryNode: CFGTry,
   ctx: IRBuildContext,
-  states: Record<string, IRState>
+  states: Record<string, IRState>,
 ): string[] {
   // Process the try block
   const tryIR = sequenceToIR(tryNode.tryBlock, ctx);
@@ -193,7 +272,11 @@ function tryToIR(
 
   // Convergence Pass: both success and catch paths land here
   const convergenceId = ctx.idGen.generate("Pass");
-  const convergenceState: IRPass = { kind: "Pass", id: convergenceId, end: true };
+  const convergenceState: IRPass = {
+    kind: "Pass",
+    id: convergenceId,
+    end: true,
+  };
   states[convergenceId] = convergenceState;
 
   // Wire try-success terminal states → convergence
@@ -215,11 +298,18 @@ function tryToIR(
     // Add Catch configuration to all failable states in the try block
     for (const stateId of Object.keys(tryIR.states)) {
       const state = states[stateId] as IRTask | IRParallel | IRMap;
-      if (state.kind === "Task" || state.kind === "Parallel" || state.kind === "Map") {
+      if (
+        state.kind === "Task" ||
+        state.kind === "Parallel" ||
+        state.kind === "Map"
+      ) {
         state.catch = [
           {
             ErrorEquals: ["States.ALL"],
-            ResultPath: `$.${tryNode.catchErrorName || "error"}`,
+            Output: mergedResultOutput(
+              tryNode.catchErrorName || "error",
+              "$states.errorOutput",
+            ),
             Next: catchIR.startAt,
           },
         ];
@@ -252,7 +342,7 @@ function tryToIR(
 function choiceToIR(
   choice: CFGChoice,
   ctx: IRBuildContext,
-  states: Record<string, IRState>
+  states: Record<string, IRState>,
 ): { choiceId: string; stateIds: string[] } {
   const id = ctx.idGen.generate("Choice");
 
@@ -273,7 +363,11 @@ function choiceToIR(
 
   // Convergence Pass: both branches land here so the next node can follow
   const convergenceId = ctx.idGen.generate("Pass");
-  const convergenceState: IRPass = { kind: "Pass", id: convergenceId, end: true };
+  const convergenceState: IRPass = {
+    kind: "Pass",
+    id: convergenceId,
+    end: true,
+  };
   states[convergenceId] = convergenceState;
 
   // Wire then-branch terminal states → convergence
@@ -298,7 +392,7 @@ function choiceToIR(
     id,
     choices: [
       {
-        condition: choice.condition,
+        condition: conditionToJsonata(choice.condition),
         next: thenIR.startAt,
       },
     ],
@@ -323,7 +417,7 @@ function choiceToIR(
 function nodeToIR(
   node: CFGNode,
   ctx: IRBuildContext,
-  states: Record<string, IRState>
+  states: Record<string, IRState>,
 ): string[] {
   switch (node.kind) {
     case "Task": {
@@ -358,7 +452,7 @@ function nodeToIR(
       const irPass: IRPass = {
         kind: "Pass",
         id,
-        result: node.result,
+        output: node.result,
       };
       states[id] = irPass;
       return [id];
@@ -388,7 +482,9 @@ function nodeToIR(
         kind: "Wait",
         id,
         seconds: node.seconds,
-        timestampPath: node.timestampPath,
+        timestamp: node.timestampExpression
+          ? jsonata(inputReference(node.timestampExpression))
+          : undefined,
       };
       return [id];
     }
@@ -404,7 +500,7 @@ function nodeToIR(
 export function sequenceToIR(
   seq: CFGSequence,
   ctx?: IRBuildContext,
-  existingStates?: Record<string, IRState>
+  existingStates?: Record<string, IRState>,
 ): IR {
   const context: IRBuildContext = ctx ?? {
     idGen: new IdGenerator(),

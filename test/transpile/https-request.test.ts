@@ -17,6 +17,6 @@ describe("transpile https-request", () => {
     const first = asl.States[asl.StartAt];
     expect(first.Type).toBe("Task");
     expect(first.Resource).toBe("arn:aws:states:::http:invoke");
-    expect(first.Parameters.Method).toBe("POST");
+    expect(first.Arguments.Method).toBe("POST");
   });
 });

@@ -8,7 +8,7 @@ describe("transpile fetch-request", () => {
     const first = asl.States[asl.StartAt];
     expect(first.Type).toBe("Task");
     expect(first.Resource).toBe("arn:aws:states:::http:invoke");
-    expect(first.Parameters.Method).toBe("GET");
+    expect(first.Arguments.Method).toBe("GET");
   });
 
   it("produces ASL Task for fetch POST with body", async () => {
@@ -16,17 +16,16 @@ describe("transpile fetch-request", () => {
     expect(asl).toMatchSnapshot();
     const first = asl.States[asl.StartAt];
     expect(first.Type).toBe("Task");
-    expect(first.Parameters.Method).toBe("POST");
-    expect(first.Parameters["RequestBody.$"]).toBe("$.payload");
+    expect(first.Arguments.Method).toBe("POST");
+    expect(first.Arguments.RequestBody).toBe("{% $states.input.payload %}");
   });
 
-  it("uses OutputPath for terminal fetch json", async () => {
+  it("uses JSONata Output for terminal fetch json", async () => {
     const { asl } = await transpile({ entry: "test/fixtures/fetch-json-return.ts" });
     expect(asl).toMatchSnapshot();
     const first = asl.States[asl.StartAt];
     expect(first.Type).toBe("Task");
-    expect(first.OutputPath).toBe("$.ResponseBody");
-    expect(first.ResultPath).toBeUndefined();
+    expect(first.Output).toBe("{% $states.result.ResponseBody %}");
   });
 
   it("warns when fetch init is passed by variable", async () => {

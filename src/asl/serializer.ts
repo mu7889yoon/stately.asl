@@ -22,7 +22,6 @@ import type {
   ASLChoiceRule,
   ASLRetryConfig,
   ASLCatchConfig,
-  ChoiceCondition,
   RetryConfig,
   CatchConfig,
 } from "../types.js";
@@ -31,7 +30,9 @@ import { buildSdkArn } from "../plugins/index.js";
 /**
  * Convert IR retry config to ASL retry config
  */
-function convertRetry(retry: RetryConfig[] | undefined): ASLRetryConfig[] | undefined {
+function convertRetry(
+  retry: RetryConfig[] | undefined,
+): ASLRetryConfig[] | undefined {
   if (!retry || retry.length === 0) {
     return undefined;
   }
@@ -46,71 +47,17 @@ function convertRetry(retry: RetryConfig[] | undefined): ASLRetryConfig[] | unde
 /**
  * Convert IR catch config to ASL catch config
  */
-function convertCatch(catchConfig: CatchConfig[] | undefined): ASLCatchConfig[] | undefined {
+function convertCatch(
+  catchConfig: CatchConfig[] | undefined,
+): ASLCatchConfig[] | undefined {
   if (!catchConfig || catchConfig.length === 0) {
     return undefined;
   }
   return catchConfig.map((c) => ({
     ErrorEquals: c.ErrorEquals,
-    ResultPath: c.ResultPath,
+    Output: c.Output,
     Next: c.Next,
   }));
-}
-
-/**
- * Convert a Choice condition to ASL choice rule properties
- */
-function conditionToASL(condition: ChoiceCondition): Partial<ASLChoiceRule> {
-  const result: Partial<ASLChoiceRule> = {
-    Variable: condition.variable,
-  };
-
-  switch (condition.operator) {
-    case "StringEquals":
-      result.StringEquals = condition.value as string;
-      break;
-    case "StringEqualsPath":
-      result.StringEqualsPath = condition.value as string;
-      break;
-    case "StringNotEquals":
-      result.StringNotEquals = condition.value as string;
-      break;
-    case "NumericEquals":
-      result.NumericEquals = condition.value as number;
-      break;
-    case "NumericGreaterThan":
-      result.NumericGreaterThan = condition.value as number;
-      break;
-    case "NumericLessThan":
-      result.NumericLessThan = condition.value as number;
-      break;
-    case "NumericGreaterThanEquals":
-      result.NumericGreaterThanEquals = condition.value as number;
-      break;
-    case "NumericLessThanEquals":
-      result.NumericLessThanEquals = condition.value as number;
-      break;
-    case "BooleanEquals":
-      result.BooleanEquals = condition.value as boolean;
-      break;
-    case "IsNull":
-      result.IsNull = condition.value as boolean;
-      break;
-    case "IsPresent":
-      result.IsPresent = condition.value as boolean;
-      break;
-    case "IsString":
-      result.IsString = condition.value as boolean;
-      break;
-    case "IsNumeric":
-      result.IsNumeric = condition.value as boolean;
-      break;
-    case "IsBoolean":
-      result.IsBoolean = condition.value as boolean;
-      break;
-  }
-
-  return result;
 }
 
 /**
@@ -120,15 +67,11 @@ function serializeTask(task: IRTask): ASLTaskState {
   const state: ASLTaskState = {
     Type: "Task",
     Resource: buildSdkArn(task.service, task.operation),
-    Parameters: task.params as Record<string, unknown>,
+    Arguments: task.arguments as Record<string, unknown>,
   };
 
-  if (task.resultPath) {
-    state.ResultPath = task.resultPath;
-  }
-
-  if (task.outputPath) {
-    state.OutputPath = task.outputPath;
+  if (task.output !== undefined) {
+    state.Output = task.output;
   }
 
   if (task.retry) {
@@ -157,7 +100,6 @@ function serializeParallel(parallel: IRParallel): ASLParallelState {
   const state: ASLParallelState = {
     Type: "Parallel",
     Branches: branches,
-    ResultPath: parallel.resultPath,
   };
 
   if (parallel.retry) {
@@ -181,14 +123,21 @@ function serializeParallel(parallel: IRParallel): ASLParallelState {
  * Serialize an IRMap to ASLMapState
  */
 function serializeMap(map: IRMap): ASLMapState {
-  const iterator = serializeToAsl(map.iterator);
+  const itemProcessor = serializeToAsl(map.itemProcessor);
 
   const state: ASLMapState = {
     Type: "Map",
-    ItemsPath: map.itemsPath,
-    Iterator: iterator,
-    ResultPath: map.resultPath,
+    Items: map.items,
+    ItemProcessor: {
+      ProcessorConfig: { Mode: "INLINE" },
+      StartAt: itemProcessor.StartAt,
+      States: itemProcessor.States,
+    },
   };
+
+  if (map.itemSelector !== undefined) {
+    state.ItemSelector = map.itemSelector;
+  }
 
   if (map.maxConcurrency) {
     state.MaxConcurrency = map.maxConcurrency;
@@ -216,7 +165,7 @@ function serializeMap(map: IRMap): ASLMapState {
  */
 function serializeChoice(choice: IRChoice): ASLChoiceState {
   const choices: ASLChoiceRule[] = choice.choices.map((c) => ({
-    ...conditionToASL(c.condition),
+    Condition: c.condition,
     Next: c.next,
   }));
 
@@ -240,12 +189,8 @@ function serializePass(pass: IRPass): ASLPassState {
     Type: "Pass",
   };
 
-  if (pass.result !== undefined) {
-    state.Result = pass.result;
-  }
-
-  if (pass.resultPath) {
-    state.ResultPath = pass.resultPath;
+  if (pass.output !== undefined) {
+    state.Output = pass.output;
   }
 
   if (pass.next) {
@@ -297,8 +242,8 @@ function serializeWait(wait: IRWait): ASLWaitState {
     state.Seconds = wait.seconds;
   }
 
-  if (wait.timestampPath) {
-    state.TimestampPath = wait.timestampPath;
+  if (wait.timestamp !== undefined) {
+    state.Timestamp = wait.timestamp as string;
   }
 
   if (wait.next) {
@@ -347,6 +292,7 @@ export function serializeToAsl(ir: IR): ASLStateMachine {
   }
 
   return {
+    QueryLanguage: "JSONata",
     StartAt: ir.startAt,
     States: states,
   };

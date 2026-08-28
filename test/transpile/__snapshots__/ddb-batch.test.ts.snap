@@ -2,21 +2,24 @@
 
 exports[`transpile ddb-batch > produces Parallel/Map/Catch-like 1`] = `
 {
+  "QueryLanguage": "JSONata",
   "StartAt": "Parallel_1",
   "States": {
     "Map_1": {
-      "ItemsPath": "$.items",
-      "Iterator": {
+      "ItemProcessor": {
+        "ProcessorConfig": {
+          "Mode": "INLINE",
+        },
         "StartAt": "putItem_2",
         "States": {
           "putItem_2": {
-            "End": true,
-            "Parameters": {
-              "Item.$": "$.Item",
-              "TableName.$": "$.TableName",
+            "Arguments": {
+              "Item": "{% $states.input.Item %}",
+              "TableName": "{% $states.input.TableName %}",
             },
+            "End": true,
+            "Output": "{% $merge([$states.input, {"putItem_2Result": $states.result}]) %}",
             "Resource": "arn:aws:states:::aws-sdk:dynamodb:putItem",
-            "ResultPath": "$.putItem_2Result",
             "Retry": [
               {
                 "BackoffRate": 2,
@@ -31,23 +34,25 @@ exports[`transpile ddb-batch > produces Parallel/Map/Catch-like 1`] = `
           },
         },
       },
+      "ItemSelector": "{% $merge([$states.input, {"Item": $states.context.Map.Item.Value}]) %}",
+      "Items": "{% $states.input.items %}",
       "Next": "putItem_3",
-      "ResultPath": undefined,
       "Type": "Map",
     },
     "Parallel_1": {
       "Branches": [
         {
+          "QueryLanguage": "JSONata",
           "StartAt": "putItem_1",
           "States": {
             "putItem_1": {
-              "End": true,
-              "Parameters": {
-                "Item.$": "$.Item",
-                "TableName.$": "$.TableName",
+              "Arguments": {
+                "Item": "{% $states.input.Item %}",
+                "TableName": "{% $states.input.TableName %}",
               },
+              "End": true,
+              "Output": "{% $merge([$states.input, {"putItem_1Result": $states.result}]) %}",
               "Resource": "arn:aws:states:::aws-sdk:dynamodb:putItem",
-              "ResultPath": "$.putItem_1Result",
               "Retry": [
                 {
                   "BackoffRate": 2,
@@ -64,7 +69,6 @@ exports[`transpile ddb-batch > produces Parallel/Map/Catch-like 1`] = `
         },
       ],
       "Next": "Map_1",
-      "ResultPath": undefined,
       "Type": "Parallel",
     },
     "Pass_1": {
@@ -72,13 +76,13 @@ exports[`transpile ddb-batch > produces Parallel/Map/Catch-like 1`] = `
       "Type": "Pass",
     },
     "putItem_3": {
-      "Next": "Pass_1",
-      "Parameters": {
-        "Item.$": "$.items[0]",
-        "TableName.$": "$.TableName",
+      "Arguments": {
+        "Item": "{% $states.input.items[0] %}",
+        "TableName": "{% $states.input.TableName %}",
       },
+      "Next": "Pass_1",
+      "Output": "{% $merge([$states.input, {"putItem_3Result": $states.result}]) %}",
       "Resource": "arn:aws:states:::aws-sdk:dynamodb:putItem",
-      "ResultPath": "$.putItem_3Result",
       "Retry": [
         {
           "BackoffRate": 2,
