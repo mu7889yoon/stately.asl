@@ -20,6 +20,7 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
     "test": "yarn build && vitest run",
+    "test:coverage": "yarn build && vitest run --coverage",
     "test:watch": "vitest",
     "lint": "eslint .",
     "format": "prettier -w .",

@@ -19,6 +19,7 @@ export type {
   CFGFail,
   CFGSucceed,
   CFGWait,
+  CFGReturn,
   ChoiceExpression,
   ChoiceLiteralExpression,
   ChoiceUndefinedExpression,
@@ -67,6 +68,8 @@ export type {
   // Options
   TranspileOptions,
   TranspileResult,
+  AnalyzeOptions,
+  AnalyzeResult,
 } from "./types.js";
 
 // Plugin exports
@@ -80,6 +83,7 @@ export {
   s3Plugin,
   sqsPlugin,
   snsPlugin,
+  httpPlugin,
 } from "./plugins/index.js";
 
 // Parser exports (for advanced use)

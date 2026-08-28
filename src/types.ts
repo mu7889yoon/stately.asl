@@ -25,12 +25,14 @@ export interface CFGTask {
   params: Record<string, unknown>;
   outputMode?: "responseBody";
   resultVariable?: string;
+  terminal?: boolean;
   sourceText?: string;
 }
 
 export interface CFGParallel {
   kind: "Parallel";
   branches: CFGSequence[];
+  resultVariable?: string;
 }
 
 export interface CFGMap {
@@ -38,6 +40,8 @@ export interface CFGMap {
   itemsExpression: string; // e.g., "items"
   itemVariable?: string; // loop variable name
   iterator: CFGSequence;
+  maxConcurrency?: number;
+  resultVariable?: string;
 }
 
 export interface CFGChoice {
@@ -75,6 +79,11 @@ export interface CFGWait {
   timestampExpression?: string;
 }
 
+export interface CFGReturn {
+  kind: "Return";
+  value?: unknown;
+}
+
 export type CFGNode =
   | CFGTask
   | CFGParallel
@@ -84,7 +93,8 @@ export type CFGNode =
   | CFGPass
   | CFGFail
   | CFGSucceed
-  | CFGWait;
+  | CFGWait
+  | CFGReturn;
 
 export interface CFGSequence {
   kind: "Sequence";
@@ -410,6 +420,27 @@ export interface TranspileOptions {
   plugins?: ServicePlugin[];
   includeRetry?: boolean;
   pretty?: boolean;
+  httpConnectionArn?: string;
+}
+
+export interface AnalyzeOptions {
+  entry: string;
+  functionName?: string;
+  plugins?: ServicePlugin[];
+  httpConnectionArn?: string;
+}
+
+export interface AnalyzeResult {
+  ok: boolean;
+  diagnostics: Diagnostic[];
+  metrics: {
+    promiseAll: number;
+    forOf: number;
+    tryCatch: number;
+    ifElse: number;
+    awaitCalls: number;
+    sdkCalls: number;
+  };
 }
 
 export interface TranspileResult {

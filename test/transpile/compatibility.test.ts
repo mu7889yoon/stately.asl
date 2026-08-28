@@ -3,7 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { describe, it, expect } from "vitest";
-import { analyze, transpile, transpileSync } from "../../dist/index.js";
+import { analyze, transpile, transpileSync } from "../../src/index.js";
+
+const httpConnectionArn =
+  "arn:aws:events:ap-northeast-1:123456789012:connection/test/id";
 
 describe("unsupported syntax compatibility diagnostics", () => {
   it("reports concrete diagnostics for the ETL example", async () => {
@@ -32,6 +35,7 @@ describe("unsupported syntax compatibility diagnostics", () => {
   it("does not diagnose supported control-flow and task patterns", async () => {
     const result = await analyze({
       entry: "test/fixtures/compatibility-supported.ts",
+      httpConnectionArn,
     });
 
     expect(result.ok).toBe(true);
@@ -136,6 +140,7 @@ describe("unsupported syntax compatibility diagnostics", () => {
   it("keeps warning-only transpilation successful", async () => {
     const result = await transpile({
       entry: "test/fixtures/compatibility-warning.ts",
+      httpConnectionArn,
     });
 
     expect(result.ok).toBe(true);

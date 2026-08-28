@@ -7,7 +7,14 @@ import {
   DetectorMetrics,
 } from "./visitors.js";
 
-export { parseSdkCall, extractObjectParams, isPromiseAll, getPromiseAllArray, parseForOfStatement, parseCondition } from "./visitors.js";
+export {
+  parseSdkCall,
+  extractObjectParams,
+  isPromiseAll,
+  getPromiseAllArray,
+  parseForOfStatement,
+  parseCondition,
+} from "./visitors.js";
 export type { DetectorMetrics, ParsedCall } from "./visitors.js";
 
 export interface ParseResult {
@@ -21,13 +28,19 @@ export interface ParseOptions {
   entry: string;
   functionName?: string;
   registry?: PluginRegistry;
+  httpConnectionArn?: string;
 }
 
 /**
  * Parses a TypeScript file and returns the source file with diagnostics
  */
 export function parseFile(options: ParseOptions): ParseResult {
-  const { entry, functionName, registry = defaultRegistry } = options;
+  const {
+    entry,
+    functionName,
+    registry = defaultRegistry,
+    httpConnectionArn,
+  } = options;
 
   const project = new Project({
     skipFileDependencyResolution: true,
@@ -41,7 +54,8 @@ export function parseFile(options: ParseOptions): ParseResult {
   const { diagnostics, metrics } = runDetectors(
     sourceFile,
     registry,
-    functionName
+    functionName,
+    httpConnectionArn,
   );
 
   return {

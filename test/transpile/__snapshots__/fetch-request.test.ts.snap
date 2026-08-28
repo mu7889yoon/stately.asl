@@ -8,6 +8,9 @@ exports[`transpile fetch-request > produces ASL Task for fetch GET 1`] = `
     "invoke_1": {
       "Arguments": {
         "ApiEndpoint": "{% $states.input.endpoint %}",
+        "Authentication": {
+          "ConnectionArn": "arn:aws:events:ap-northeast-1:123456789012:connection/test/id",
+        },
         "Method": "GET",
       },
       "End": true,
@@ -37,6 +40,9 @@ exports[`transpile fetch-request > produces ASL Task for fetch POST with body 1`
     "invoke_1": {
       "Arguments": {
         "ApiEndpoint": "{% $states.input.apiUrl %}",
+        "Authentication": {
+          "ConnectionArn": "arn:aws:events:ap-northeast-1:123456789012:connection/test/id",
+        },
         "Headers": {
           "Content-Type": "application/json",
         },
@@ -70,6 +76,9 @@ exports[`transpile fetch-request > uses JSONata Output for terminal fetch json 1
     "invoke_1": {
       "Arguments": {
         "ApiEndpoint": "{% $states.input.endpoint %}",
+        "Authentication": {
+          "ConnectionArn": "arn:aws:events:ap-northeast-1:123456789012:connection/test/id",
+        },
         "Method": "GET",
       },
       "End": true,

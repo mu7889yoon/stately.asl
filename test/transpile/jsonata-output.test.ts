@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { transpile } from "../../dist/index.js";
+import { transpile } from "../../src/index.js";
+
+const httpConnectionArn =
+  "arn:aws:events:ap-northeast-1:123456789012:connection/test/id";
 
 const jsonPathOnlyKeys = new Set([
   "Parameters",
@@ -33,9 +36,12 @@ function expectJsonataOnly(value: unknown): void {
 
 describe("JSONata ASL output", () => {
   it("converts nested references and literals in Arguments", async () => {
-    const { asl } = await transpile({
+    const result = await transpile({
       entry: "test/fixtures/jsonata-arguments.ts",
     });
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics).toEqual([]);
+    const { asl } = result;
     const first = asl.States[asl.StartAt];
 
     expect(first.Type).toBe("Task");
@@ -53,10 +59,14 @@ describe("JSONata ASL output", () => {
   });
 
   it("uses JSONata fields throughout nested control flow", async () => {
-    const { asl } = await transpile({
+    const result = await transpile({
       entry: "test/fixtures/compatibility-supported.ts",
       includeRetry: false,
+      httpConnectionArn,
     });
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics).toEqual([]);
+    const { asl } = result;
 
     expect(asl.QueryLanguage).toBe("JSONata");
     expectJsonataOnly(asl);

@@ -1,19 +1,33 @@
-import { Node, FunctionDeclaration, ArrowFunction, Block, SourceFile } from "ts-morph";
+import {
+  Node,
+  FunctionDeclaration,
+  ArrowFunction,
+  Block,
+  SourceFile,
+} from "ts-morph";
 import type { CFGSequence } from "../types.js";
 import { PluginRegistry, defaultRegistry } from "../plugins/index.js";
 import { parseFile, findTargetFunction } from "../parser/index.js";
 import {
-  processStatement,
   processExpression,
+  processStatements,
   CFGBuildContext,
 } from "./patterns.js";
 
-export { processStatement, extractTaskFromAwait, extractParallel, extractMap, extractTry, extractChoice } from "./patterns.js";
+export {
+  processStatement,
+  extractTaskFromAwait,
+  extractParallel,
+  extractMap,
+  extractTry,
+  extractChoice,
+} from "./patterns.js";
 
 export interface BuildCFGOptions {
   entry: string;
   functionName?: string;
   registry?: PluginRegistry;
+  httpConnectionArn?: string;
 }
 
 export interface BuildCFGResult {
@@ -21,19 +35,53 @@ export interface BuildCFGResult {
   sourceFile: SourceFile;
 }
 
+export interface BuildCFGFromSourceOptions {
+  sourceFile: SourceFile;
+  functionName?: string;
+  registry?: PluginRegistry;
+  httpConnectionArn?: string;
+}
+
 /**
  * Builds a Control Flow Graph from a TypeScript source file
  */
 export function buildCFG(options: BuildCFGOptions): BuildCFGResult {
-  const { entry, functionName, registry = defaultRegistry } = options;
+  const {
+    entry,
+    functionName,
+    registry = defaultRegistry,
+    httpConnectionArn,
+  } = options;
 
-  const { sourceFile } = parseFile({ entry, registry });
+  const { sourceFile } = parseFile({
+    entry,
+    functionName,
+    registry,
+    httpConnectionArn,
+  });
+  return buildCFGFromSourceFile({
+    sourceFile,
+    functionName,
+    registry,
+    httpConnectionArn,
+  });
+}
+
+export function buildCFGFromSourceFile(
+  options: BuildCFGFromSourceOptions,
+): BuildCFGResult {
+  const {
+    sourceFile,
+    functionName,
+    registry = defaultRegistry,
+    httpConnectionArn,
+  } = options;
   const targetFn = findTargetFunction(sourceFile, functionName);
 
   if (!targetFn) {
     throw new Error(
-      `No target function found in ${entry}. ` +
-      `Specify a function name with --function or export an async function.`
+      `No target function found in ${sourceFile.getFilePath()}. ` +
+        `Specify a function name with --function or export an async function.`,
     );
   }
 
@@ -45,15 +93,14 @@ export function buildCFG(options: BuildCFGOptions): BuildCFGResult {
   const ctx: CFGBuildContext = {
     registry,
     visitedNodes: new Set(),
+    httpConnectionArn,
   };
 
   const cfg: CFGSequence = { kind: "Sequence", nodes: [] };
 
   // Process the function body
   if (Node.isBlock(body)) {
-    for (const stmt of body.getStatements()) {
-      processStatement(stmt, cfg, ctx);
-    }
+    processStatements(body.getStatements(), cfg, ctx);
   } else {
     // Arrow function with expression body
     if (Node.isExpression(body)) {
@@ -67,7 +114,9 @@ export function buildCFG(options: BuildCFGOptions): BuildCFGResult {
 /**
  * Gets the body of a function (either Block or Expression for arrow functions)
  */
-function getBody(fn: FunctionDeclaration | ArrowFunction): Block | Node | undefined {
+function getBody(
+  fn: FunctionDeclaration | ArrowFunction,
+): Block | Node | undefined {
   if (Node.isFunctionDeclaration(fn)) {
     return fn.getBody();
   }

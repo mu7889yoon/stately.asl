@@ -1,9 +1,18 @@
 import { describe, it, expect } from "vitest";
-import { transpile } from "../../dist/index.js";
+import { transpile } from "../../src/index.js";
+
+const httpConnectionArn =
+  "arn:aws:events:ap-northeast-1:123456789012:connection/test/id";
 
 describe("transpile https-request", () => {
   it("produces ASL Task for https.get", async () => {
-    const { asl } = await transpile({ entry: "test/fixtures/https-request.ts" });
+    const result = await transpile({
+      entry: "test/fixtures/https-request.ts",
+      httpConnectionArn,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics).toEqual([]);
+    const { asl } = result;
     expect(asl).toMatchSnapshot();
     expect(asl.States).toBeTruthy();
     const first = asl.States[asl.StartAt];
@@ -12,7 +21,13 @@ describe("transpile https-request", () => {
   });
 
   it("produces ASL Task for https.request with POST", async () => {
-    const { asl } = await transpile({ entry: "test/fixtures/https-post.ts" });
+    const result = await transpile({
+      entry: "test/fixtures/https-post.ts",
+      httpConnectionArn,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics).toEqual([]);
+    const { asl } = result;
     expect(asl).toMatchSnapshot();
     const first = asl.States[asl.StartAt];
     expect(first.Type).toBe("Task");
