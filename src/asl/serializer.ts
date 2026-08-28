@@ -102,6 +102,10 @@ function serializeParallel(parallel: IRParallel): ASLParallelState {
     Branches: branches,
   };
 
+  if (parallel.output !== undefined) {
+    state.Output = parallel.output;
+  }
+
   if (parallel.retry) {
     state.Retry = convertRetry(parallel.retry);
   }
@@ -137,6 +141,10 @@ function serializeMap(map: IRMap): ASLMapState {
 
   if (map.itemSelector !== undefined) {
     state.ItemSelector = map.itemSelector;
+  }
+
+  if (map.output !== undefined) {
+    state.Output = map.output;
   }
 
   if (map.maxConcurrency) {

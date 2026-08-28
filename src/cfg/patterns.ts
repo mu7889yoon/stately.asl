@@ -15,8 +15,6 @@ import type {
   CFGMap,
   CFGTry,
   CFGChoice,
-  ChoiceCondition,
-  ChoiceOperator,
 } from "../types.js";
 import { PluginRegistry } from "../plugins/index.js";
 import {
@@ -69,7 +67,7 @@ function buildTaskFromHttpCall(httpInfo: {
 
 function extractTaskFromCall(
   call: CallExpression,
-  ctx: CFGBuildContext
+  ctx: CFGBuildContext,
 ): CFGTask | undefined {
   const httpInfo = parseHttpsCall(call) ?? parseFetchCall(call);
   if (httpInfo) {
@@ -90,15 +88,13 @@ function extractTaskFromCall(
   };
 }
 
-function extractTerminalFetchJsonTask(
-  expr: Expression
-): CFGTask | undefined {
-  const call =
-    Node.isCallExpression(expr)
-      ? expr
-      : Node.isAwaitExpression(expr) && Node.isCallExpression(expr.getExpression())
-        ? (expr.getExpression() as CallExpression)
-        : undefined;
+function extractTerminalFetchJsonTask(expr: Expression): CFGTask | undefined {
+  const call = Node.isCallExpression(expr)
+    ? expr
+    : Node.isAwaitExpression(expr) &&
+        Node.isCallExpression(expr.getExpression())
+      ? (expr.getExpression() as CallExpression)
+      : undefined;
 
   if (!call) {
     return undefined;
@@ -119,7 +115,7 @@ function extractTerminalFetchJsonTask(
  */
 export function extractTaskFromAwait(
   awaitExpr: AwaitExpression,
-  ctx: CFGBuildContext
+  ctx: CFGBuildContext,
 ): CFGTask | undefined {
   const inner = awaitExpr.getExpression();
   if (!Node.isCallExpression(inner)) {
@@ -134,7 +130,7 @@ export function extractTaskFromAwait(
  */
 export function extractHttpTask(
   call: CallExpression,
-  _ctx: CFGBuildContext
+  _ctx: CFGBuildContext,
 ): CFGTask | undefined {
   const httpInfo = parseHttpsCall(call) ?? parseFetchCall(call);
   if (!httpInfo) {
@@ -149,7 +145,7 @@ export function extractHttpTask(
  */
 export function extractParallel(
   call: CallExpression,
-  ctx: CFGBuildContext
+  ctx: CFGBuildContext,
 ): CFGParallel | undefined {
   if (!isPromiseAll(call)) {
     return undefined;
@@ -197,7 +193,7 @@ export function extractParallel(
  */
 export function extractParallelFromMap(
   call: CallExpression,
-  ctx: CFGBuildContext
+  ctx: CFGBuildContext,
 ): CFGParallel | undefined {
   if (!isPromiseAll(call)) {
     return undefined;
@@ -276,7 +272,7 @@ export function extractParallelFromMap(
  */
 export function extractMap(
   stmt: ForOfStatement,
-  ctx: CFGBuildContext
+  ctx: CFGBuildContext,
 ): CFGMap | undefined {
   const parsed = parseForOfStatement(stmt);
   if (!parsed) {
@@ -315,7 +311,7 @@ export function extractMap(
  */
 export function extractTry(
   stmt: TryStatement,
-  ctx: CFGBuildContext
+  ctx: CFGBuildContext,
 ): CFGTry | undefined {
   const tryBlock = stmt.getTryBlock();
   const catchClause = stmt.getCatchClause();
@@ -364,7 +360,7 @@ export function extractTry(
  */
 export function extractChoice(
   stmt: IfStatement,
-  ctx: CFGBuildContext
+  ctx: CFGBuildContext,
 ): CFGChoice | undefined {
   const condExpr = stmt.getExpression();
   const parsedCond = parseCondition(condExpr);
@@ -373,12 +369,6 @@ export function extractChoice(
     // Can't parse condition, skip
     return undefined;
   }
-
-  const condition: ChoiceCondition = {
-    variable: parsedCond.variable,
-    operator: parsedCond.operator as ChoiceOperator,
-    value: parsedCond.value,
-  };
 
   // Process then branch
   const thenStmt = stmt.getThenStatement();
@@ -420,7 +410,7 @@ export function extractChoice(
 
   return {
     kind: "Choice",
-    condition,
+    condition: parsedCond,
     thenBranch: thenSeq,
     elseBranch: elseSeq,
   };
@@ -432,7 +422,7 @@ export function extractChoice(
 export function processStatement(
   stmt: Statement,
   seq: CFGSequence,
-  ctx: CFGBuildContext
+  ctx: CFGBuildContext,
 ): void {
   if (ctx.visitedNodes.has(stmt)) {
     return;
@@ -495,7 +485,17 @@ export function processStatement(
     for (const decl of stmt.getDeclarationList().getDeclarations()) {
       const init = decl.getInitializer();
       if (init) {
+        const nodeCount = seq.nodes.length;
         processExpression(init, seq, ctx);
+        const name = decl.getNameNode();
+        const addedNode = seq.nodes[nodeCount];
+        if (
+          seq.nodes.length === nodeCount + 1 &&
+          addedNode?.kind === "Task" &&
+          Node.isIdentifier(name)
+        ) {
+          addedNode.resultVariable = name.getText();
+        }
       }
     }
     return;
@@ -508,7 +508,7 @@ export function processStatement(
 export function processExpression(
   expr: Expression,
   seq: CFGSequence,
-  ctx: CFGBuildContext
+  ctx: CFGBuildContext,
 ): void {
   if (ctx.visitedNodes.has(expr)) {
     return;

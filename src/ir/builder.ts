@@ -6,7 +6,8 @@ import type {
   CFGMap,
   CFGTry,
   CFGChoice,
-  ChoiceCondition,
+  ChoiceExpression,
+  ChoiceReferenceExpression,
   IR,
   IRState,
   IRTask,
@@ -68,6 +69,7 @@ class IdGenerator {
 interface IRBuildContext {
   idGen: IdGenerator;
   includeRetry: boolean;
+  resultVariables: Map<string, string>;
 }
 
 interface ConvertedNode {
@@ -134,54 +136,172 @@ function mergedResultOutput(field: string, resultExpression: string): string {
   );
 }
 
-function conditionValue(value: unknown): string {
-  if (typeof value === "string" && value.startsWith("$.")) {
-    return inputReference(value);
-  }
-  return JSON.stringify(value);
+function childContext(ctx: IRBuildContext): IRBuildContext {
+  return {
+    ...ctx,
+    resultVariables: new Map(ctx.resultVariables),
+  };
 }
 
-function conditionToJsonata(condition: ChoiceCondition): string {
-  const left = inputReference(condition.variable);
-  const right = conditionValue(condition.value);
+function jsonataProperty(property: string): string {
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(property)
+    ? `.${property}`
+    : `[${JSON.stringify(property)}]`;
+}
 
-  switch (condition.operator) {
-    case "StringEquals":
-    case "StringEqualsPath":
-    case "NumericEquals":
-    case "BooleanEquals":
-    case "BooleanEqualsPath":
-      return jsonata(`${left} = ${right}`);
-    case "StringNotEquals":
-    case "StringNotEqualsPath":
-    case "NumericNotEquals":
-    case "BooleanNotEquals":
-      return jsonata(`${left} != ${right}`);
-    case "NumericGreaterThan":
-    case "NumericGreaterThanPath":
-      return jsonata(`${left} > ${right}`);
-    case "NumericLessThan":
-    case "NumericLessThanPath":
-      return jsonata(`${left} < ${right}`);
-    case "NumericGreaterThanEquals":
-    case "NumericGreaterThanEqualsPath":
-      return jsonata(`${left} >= ${right}`);
-    case "NumericLessThanEquals":
-    case "NumericLessThanEqualsPath":
-      return jsonata(`${left} <= ${right}`);
-    case "IsNull":
-      return jsonata(`${left} = null`);
-    case "IsPresent":
-      return jsonata(
-        condition.value ? `$exists(${left})` : `not($exists(${left}))`,
-      );
-    case "IsString":
-      return jsonata(`$type(${left}) = "string"`);
-    case "IsNumeric":
-      return jsonata(`$type(${left}) = "number"`);
-    case "IsBoolean":
-      return jsonata(`$type(${left}) = "boolean"`);
+function referenceToJsonata(
+  reference: ChoiceReferenceExpression,
+  ctx: IRBuildContext,
+): string {
+  const root = ctx.resultVariables.get(reference.root) ?? reference.root;
+  let result = `$states.input${jsonataProperty(root)}`;
+  for (const part of reference.path) {
+    result += typeof part === "number" ? `[${part}]` : jsonataProperty(part);
   }
+  return result;
+}
+
+function optionalReferences(
+  expression: ChoiceExpression,
+): ChoiceReferenceExpression[] {
+  switch (expression.kind) {
+    case "Reference":
+      return expression.optional ? [expression] : [];
+    case "Comparison":
+    case "Logical":
+      return [
+        ...optionalReferences(expression.left),
+        ...optionalReferences(expression.right),
+      ];
+    case "Not":
+      return optionalReferences(expression.operand);
+    case "Call":
+      return expression.arguments.flatMap(optionalReferences);
+    default:
+      return [];
+  }
+}
+
+function uniqueOptionalPaths(
+  expression: ChoiceExpression,
+  ctx: IRBuildContext,
+): string[] {
+  return [
+    ...new Set(
+      optionalReferences(expression).map((reference) =>
+        referenceToJsonata(reference, ctx),
+      ),
+    ),
+  ];
+}
+
+function comparisonToJsonata(
+  expression: Extract<ChoiceExpression, { kind: "Comparison" }>,
+  ctx: IRBuildContext,
+): string {
+  const undefinedSide =
+    expression.left.kind === "Undefined"
+      ? expression.right
+      : expression.right.kind === "Undefined"
+        ? expression.left
+        : undefined;
+
+  if (undefinedSide?.kind === "Reference") {
+    const reference = referenceToJsonata(undefinedSide, ctx);
+    switch (expression.operator) {
+      case "===":
+        return `$not($exists(${reference}))`;
+      case "!==":
+        return `$exists(${reference})`;
+      case "==":
+        return `($not($exists(${reference})) or ${reference} = null)`;
+      case "!=":
+        return `($exists(${reference}) and ${reference} != null)`;
+      default:
+        return "false";
+    }
+  }
+
+  const nullSide =
+    expression.left.kind === "Literal" && expression.left.value === null
+      ? expression.right
+      : expression.right.kind === "Literal" && expression.right.value === null
+        ? expression.left
+        : undefined;
+  if (nullSide?.kind === "Reference") {
+    const reference = referenceToJsonata(nullSide, ctx);
+    switch (expression.operator) {
+      case "===":
+        return `($exists(${reference}) and ${reference} = null)`;
+      case "!==":
+        return `($not($exists(${reference})) or ${reference} != null)`;
+      case "==":
+        return `($not($exists(${reference})) or ${reference} = null)`;
+      case "!=":
+        return `($exists(${reference}) and ${reference} != null)`;
+      default:
+        break;
+    }
+  }
+
+  const left = expressionToJsonata(expression.left, ctx);
+  const right = expressionToJsonata(expression.right, ctx);
+  const operator =
+    expression.operator === "===" || expression.operator === "=="
+      ? "="
+      : expression.operator === "!==" || expression.operator === "!="
+        ? "!="
+        : expression.operator;
+  const comparison = `${left} ${operator} ${right}`;
+  const paths = uniqueOptionalPaths(expression, ctx);
+  if (paths.length === 0) return comparison;
+
+  const allExist = paths.map((path) => `$exists(${path})`).join(" and ");
+  if (expression.operator === "!==" || expression.operator === "!=") {
+    return `($not(${allExist}) or ${comparison})`;
+  }
+  return `(${allExist} and ${comparison})`;
+}
+
+function expressionToJsonata(
+  expression: ChoiceExpression,
+  ctx: IRBuildContext,
+): string {
+  switch (expression.kind) {
+    case "Literal":
+      return JSON.stringify(expression.value);
+    case "Undefined":
+      return "undefined";
+    case "Reference":
+      return referenceToJsonata(expression, ctx);
+    case "Comparison":
+      return comparisonToJsonata(expression, ctx);
+    case "Logical": {
+      const operator = expression.operator === "&&" ? "and" : "or";
+      return `(${expressionToJsonata(expression.left, ctx)}) ${operator} (${expressionToJsonata(expression.right, ctx)})`;
+    }
+    case "Not":
+      return `$not(${expressionToJsonata(expression.operand, ctx)})`;
+    case "Call": {
+      const functionName = {
+        "Date.now": "$millis",
+        "Date.parse": "$toMillis",
+        Number: "$number",
+        String: "$string",
+      }[expression.function];
+      const args = expression.arguments
+        .map((argument) => expressionToJsonata(argument, ctx))
+        .join(", ");
+      return `${functionName}(${args})`;
+    }
+  }
+}
+
+function conditionToJsonata(
+  condition: ChoiceExpression,
+  ctx: IRBuildContext,
+): string {
+  return jsonata(expressionToJsonata(condition, ctx));
 }
 
 /**
@@ -189,6 +309,7 @@ function conditionToJsonata(condition: ChoiceCondition): string {
  */
 function taskToIR(task: CFGTask, ctx: IRBuildContext): IRTask {
   const id = ctx.idGen.generate(task.operation);
+  const resultField = `${id}Result`;
 
   const irTask: IRTask = {
     kind: "Task",
@@ -199,8 +320,12 @@ function taskToIR(task: CFGTask, ctx: IRBuildContext): IRTask {
     output:
       task.outputMode === "responseBody"
         ? jsonata("$states.result.ResponseBody")
-        : mergedResultOutput(`${id}Result`, "$states.result"),
+        : mergedResultOutput(resultField, "$states.result"),
   };
+
+  if (task.resultVariable && task.outputMode !== "responseBody") {
+    ctx.resultVariables.set(task.resultVariable, resultField);
+  }
 
   if (ctx.includeRetry) {
     irTask.retry = [
@@ -223,13 +348,14 @@ function parallelToIR(parallel: CFGParallel, ctx: IRBuildContext): IRParallel {
   const id = ctx.idGen.generate("Parallel");
 
   const branches: IR[] = parallel.branches.map((branch) =>
-    sequenceToIR(branch, ctx),
+    sequenceToIR(branch, childContext(ctx)),
   );
 
   return {
     kind: "Parallel",
     id,
     branches,
+    output: mergedResultOutput(`${id}Result`, "$states.result"),
   };
 }
 
@@ -239,7 +365,7 @@ function parallelToIR(parallel: CFGParallel, ctx: IRBuildContext): IRParallel {
 function mapToIR(map: CFGMap, ctx: IRBuildContext): IRMap {
   const id = ctx.idGen.generate("Map");
 
-  const iterator = sequenceToIR(map.iterator, ctx);
+  const iterator = sequenceToIR(map.iterator, childContext(ctx));
 
   return {
     kind: "Map",
@@ -249,6 +375,7 @@ function mapToIR(map: CFGMap, ctx: IRBuildContext): IRMap {
       ? mergedResultOutput(map.itemVariable, "$states.context.Map.Item.Value")
       : undefined,
     itemProcessor: iterator,
+    output: mergedResultOutput(`${id}Result`, "$states.result"),
   };
 }
 
@@ -263,7 +390,7 @@ function tryToIR(
   states: Record<string, IRState>,
 ): string[] {
   // Process the try block
-  const tryIR = sequenceToIR(tryNode.tryBlock, ctx);
+  const tryIR = sequenceToIR(tryNode.tryBlock, childContext(ctx));
 
   // Add try states to the states record
   for (const [stateId, state] of Object.entries(tryIR.states)) {
@@ -288,7 +415,7 @@ function tryToIR(
 
   // If there's a catch block, add catch handling
   if (tryNode.catchBlock && tryNode.catchBlock.nodes.length > 0) {
-    const catchIR = sequenceToIR(tryNode.catchBlock, ctx);
+    const catchIR = sequenceToIR(tryNode.catchBlock, childContext(ctx));
 
     // Add catch states
     for (const [stateId, state] of Object.entries(catchIR.states)) {
@@ -347,7 +474,7 @@ function choiceToIR(
   const id = ctx.idGen.generate("Choice");
 
   // Process then branch
-  const thenIR = sequenceToIR(choice.thenBranch, ctx);
+  const thenIR = sequenceToIR(choice.thenBranch, childContext(ctx));
   for (const [stateId, state] of Object.entries(thenIR.states)) {
     states[stateId] = state;
   }
@@ -355,7 +482,7 @@ function choiceToIR(
   // Process else branch (if exists)
   let elseIR: IR | undefined;
   if (choice.elseBranch && choice.elseBranch.nodes.length > 0) {
-    elseIR = sequenceToIR(choice.elseBranch, ctx);
+    elseIR = sequenceToIR(choice.elseBranch, childContext(ctx));
     for (const [stateId, state] of Object.entries(elseIR.states)) {
       states[stateId] = state;
     }
@@ -392,7 +519,7 @@ function choiceToIR(
     id,
     choices: [
       {
-        condition: conditionToJsonata(choice.condition),
+        condition: conditionToJsonata(choice.condition, ctx),
         next: thenIR.startAt,
       },
     ],
@@ -505,6 +632,7 @@ export function sequenceToIR(
   const context: IRBuildContext = ctx ?? {
     idGen: new IdGenerator(),
     includeRetry: false,
+    resultVariables: new Map(),
   };
 
   const states: Record<string, IRState> = existingStates ?? {};
@@ -570,6 +698,7 @@ export function buildIR(cfg: CFGSequence, options?: BuildIROptions): IR {
   const ctx: IRBuildContext = {
     idGen: new IdGenerator(),
     includeRetry: options?.includeRetry ?? false,
+    resultVariables: new Map(),
   };
 
   return sequenceToIR(cfg, ctx);
