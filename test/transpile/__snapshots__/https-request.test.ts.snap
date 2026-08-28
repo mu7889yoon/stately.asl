@@ -2,16 +2,17 @@
 
 exports[`transpile https-request > produces ASL Task for https.get 1`] = `
 {
+  "QueryLanguage": "JSONata",
   "StartAt": "invoke_1",
   "States": {
     "invoke_1": {
-      "End": true,
-      "Parameters": {
-        "ApiEndpoint.$": "$.endpoint",
+      "Arguments": {
+        "ApiEndpoint": "{% $states.input.endpoint %}",
         "Method": "GET",
       },
+      "End": true,
+      "Output": "{% $merge([$states.input, {"invoke_1Result": $states.result}]) %}",
       "Resource": "arn:aws:states:::http:invoke",
-      "ResultPath": "$.invoke_1Result",
       "Retry": [
         {
           "BackoffRate": 2,
@@ -30,19 +31,20 @@ exports[`transpile https-request > produces ASL Task for https.get 1`] = `
 
 exports[`transpile https-request > produces ASL Task for https.request with POST 1`] = `
 {
+  "QueryLanguage": "JSONata",
   "StartAt": "invoke_1",
   "States": {
     "invoke_1": {
-      "End": true,
-      "Parameters": {
-        "ApiEndpoint.$": "$.apiUrl",
+      "Arguments": {
+        "ApiEndpoint": "{% $states.input.apiUrl %}",
         "Headers": {
           "Content-Type": "application/json",
         },
         "Method": "POST",
       },
+      "End": true,
+      "Output": "{% $merge([$states.input, {"invoke_1Result": $states.result}]) %}",
       "Resource": "arn:aws:states:::http:invoke",
-      "ResultPath": "$.invoke_1Result",
       "Retry": [
         {
           "BackoffRate": 2,

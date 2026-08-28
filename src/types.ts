@@ -23,8 +23,7 @@ export interface CFGTask {
   service: string; // e.g., "dynamodb", "s3", "sqs", "sns"
   operation: string; // e.g., "putItem", "getObject"
   params: Record<string, unknown>;
-  resultPath?: string | null;
-  outputPath?: string;
+  outputMode?: "responseBody";
   sourceText?: string;
 }
 
@@ -35,7 +34,7 @@ export interface CFGParallel {
 
 export interface CFGMap {
   kind: "Map";
-  itemsPath: string; // e.g., "$.items"
+  itemsExpression: string; // e.g., "items"
   itemVariable?: string; // loop variable name
   iterator: CFGSequence;
 }
@@ -72,7 +71,7 @@ export interface CFGSucceed {
 export interface CFGWait {
   kind: "Wait";
   seconds?: number;
-  timestampPath?: string;
+  timestampExpression?: string;
 }
 
 export type CFGNode =
@@ -132,9 +131,8 @@ export interface IRTask {
   id: string;
   service: string;
   operation: string;
-  params: JsonExpr;
-  resultPath?: string;
-  outputPath?: string;
+  arguments: JsonExpr;
+  output?: JsonExpr;
   retry?: RetryConfig[];
   catch?: CatchConfig[];
   next?: string;
@@ -145,7 +143,6 @@ export interface IRParallel {
   kind: "Parallel";
   id: string;
   branches: IR[];
-  resultPath?: string;
   retry?: RetryConfig[];
   catch?: CatchConfig[];
   next?: string;
@@ -155,10 +152,10 @@ export interface IRParallel {
 export interface IRMap {
   kind: "Map";
   id: string;
-  itemsPath: string;
-  iterator: IR;
+  items: JsonExpr;
+  itemSelector?: JsonExpr;
+  itemProcessor: IR;
   maxConcurrency?: number;
-  resultPath?: string;
   retry?: RetryConfig[];
   catch?: CatchConfig[];
   next?: string;
@@ -173,15 +170,14 @@ export interface IRChoice {
 }
 
 export interface IRChoiceRule {
-  condition: ChoiceCondition;
+  condition: string;
   next: string;
 }
 
 export interface IRPass {
   kind: "Pass";
   id: string;
-  result?: unknown;
-  resultPath?: string;
+  output?: JsonExpr;
   next?: string;
   end?: boolean;
 }
@@ -202,7 +198,7 @@ export interface IRWait {
   kind: "Wait";
   id: string;
   seconds?: number;
-  timestampPath?: string;
+  timestamp?: JsonExpr;
   next?: string;
   end?: boolean;
 }
@@ -231,7 +227,7 @@ export interface RetryConfig {
 
 export interface CatchConfig {
   ErrorEquals: string[];
-  ResultPath?: string;
+  Output?: JsonExpr;
   Next: string;
 }
 
@@ -261,10 +257,8 @@ export type ASLState =
 export interface ASLTaskState {
   Type: "Task";
   Resource: string;
-  Parameters?: Record<string, unknown>;
-  ResultPath?: string;
-  ResultSelector?: Record<string, unknown>;
-  OutputPath?: string;
+  Arguments?: Record<string, unknown>;
+  Output?: JsonExpr;
   Retry?: ASLRetryConfig[];
   Catch?: ASLCatchConfig[];
   Next?: string;
@@ -276,8 +270,8 @@ export interface ASLTaskState {
 export interface ASLParallelState {
   Type: "Parallel";
   Branches: ASLStateMachine[];
-  ResultPath?: string;
-  ResultSelector?: Record<string, unknown>;
+  Arguments?: JsonExpr;
+  Output?: JsonExpr;
   Retry?: ASLRetryConfig[];
   Catch?: ASLCatchConfig[];
   Next?: string;
@@ -286,16 +280,15 @@ export interface ASLParallelState {
 
 export interface ASLMapState {
   Type: "Map";
-  ItemsPath?: string;
-  Iterator?: ASLStateMachine;
+  Items?: JsonExpr;
+  ItemSelector?: JsonExpr;
   ItemProcessor?: {
-    ProcessorConfig?: { Mode: string };
+    ProcessorConfig?: { Mode: "INLINE" };
     StartAt: string;
     States: Record<string, ASLState>;
   };
   MaxConcurrency?: number;
-  ResultPath?: string;
-  ResultSelector?: Record<string, unknown>;
+  Output?: JsonExpr;
   Retry?: ASLRetryConfig[];
   Catch?: ASLCatchConfig[];
   Next?: string;
@@ -309,32 +302,13 @@ export interface ASLChoiceState {
 }
 
 export interface ASLChoiceRule {
-  Variable?: string;
-  StringEquals?: string;
-  StringEqualsPath?: string;
-  StringNotEquals?: string;
-  NumericEquals?: number;
-  NumericGreaterThan?: number;
-  NumericLessThan?: number;
-  NumericGreaterThanEquals?: number;
-  NumericLessThanEquals?: number;
-  BooleanEquals?: boolean;
-  IsNull?: boolean;
-  IsPresent?: boolean;
-  IsString?: boolean;
-  IsNumeric?: boolean;
-  IsBoolean?: boolean;
-  And?: ASLChoiceRule[];
-  Or?: ASLChoiceRule[];
-  Not?: ASLChoiceRule;
+  Condition: string;
   Next: string;
 }
 
 export interface ASLPassState {
   Type: "Pass";
-  Result?: unknown;
-  ResultPath?: string;
-  Parameters?: Record<string, unknown>;
+  Output?: JsonExpr;
   Next?: string;
   End?: boolean;
 }
@@ -351,10 +325,8 @@ export interface ASLSucceedState {
 
 export interface ASLWaitState {
   Type: "Wait";
-  Seconds?: number;
+  Seconds?: number | string;
   Timestamp?: string;
-  SecondsPath?: string;
-  TimestampPath?: string;
   Next?: string;
   End?: boolean;
 }
@@ -370,7 +342,7 @@ export interface ASLRetryConfig {
 
 export interface ASLCatchConfig {
   ErrorEquals: string[];
-  ResultPath?: string;
+  Output?: JsonExpr;
   Next: string;
 }
 

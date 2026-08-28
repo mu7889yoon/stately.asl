@@ -2,16 +2,17 @@
 
 exports[`transpile ddb-put-item > produces ASL Task for PutItem 1`] = `
 {
+  "QueryLanguage": "JSONata",
   "StartAt": "putItem_1",
   "States": {
     "putItem_1": {
-      "End": true,
-      "Parameters": {
-        "Item.$": "$.Item",
-        "TableName.$": "$.TableName",
+      "Arguments": {
+        "Item": "{% $states.input.Item %}",
+        "TableName": "{% $states.input.TableName %}",
       },
+      "End": true,
+      "Output": "{% $merge([$states.input, {"putItem_1Result": $states.result}]) %}",
       "Resource": "arn:aws:states:::aws-sdk:dynamodb:putItem",
-      "ResultPath": "$.putItem_1Result",
       "Retry": [
         {
           "BackoffRate": 2,

@@ -110,8 +110,7 @@ function extractTerminalFetchJsonTask(
   }
 
   const task = buildTaskFromHttpCall(httpInfo);
-  task.resultPath = null;
-  task.outputPath = "$.ResponseBody";
+  task.outputMode = "responseBody";
   return task;
 }
 
@@ -228,10 +227,6 @@ export function extractParallelFromMap(
     return undefined;
   }
 
-  // Get the array being mapped (reserved for future Map state support)
-  const arrayExpr = mapExpr.getExpression();
-  const _itemsPath = `$.${arrayExpr.getText()}`;
-
   // Get the map callback
   const mapArgs = mapCall.getArguments();
   if (mapArgs.length === 0) {
@@ -288,7 +283,7 @@ export function extractMap(
     return undefined;
   }
 
-  const itemsPath = `$.${parsed.iterable}`;
+  const itemsExpression = parsed.iterable;
   const iteratorSeq: CFGSequence = { kind: "Sequence", nodes: [] };
 
   const body = stmt.getStatement();
@@ -309,7 +304,7 @@ export function extractMap(
 
   return {
     kind: "Map",
-    itemsPath,
+    itemsExpression,
     itemVariable: parsed.variable,
     iterator: iteratorSeq,
   };

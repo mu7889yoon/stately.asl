@@ -618,7 +618,7 @@ export function parseCondition(expr: Expression): {
     }
 
     return {
-      variable: `$.${leftText}`,
+      variable: leftText,
       operator,
       value: value === null ? true : value, // IsNull expects boolean
     };

@@ -10,6 +10,7 @@ AWS Step Functionsのワークフローを、慣れ親しんだTypeScriptの構�
 
 - TypeScriptの直感的な構文でStep Functionsワークフローを記述
 - AWS SDK v3の呼び出しを自動的にASLのTask状態に変換
+- JSONataを使ったASLを生成
 - 型安全な開発体験
 
 
@@ -109,38 +110,39 @@ export async function handler(TableName: string, Key: Record<string, any>, Item:
 
 ```json
 {
+  "QueryLanguage": "JSONata",
   "StartAt": "putItem_1",
   "States": {
     "putItem_1": {
       "Type": "Task",
       "Resource": "arn:aws:states:::aws-sdk:dynamodb:putItem",
-      "Parameters": {
-        "TableName.$": "$.TableName",
-        "Item.$": "$.Item"
+      "Arguments": {
+        "TableName": "{% $states.input.TableName %}",
+        "Item": "{% $states.input.Item %}"
       },
-      "ResultPath": "$.putItem_1Result",
+      "Output": "{% $merge([$states.input, {\"putItem_1Result\": $states.result}]) %}",
       "Retry": [
         {
           "ErrorEquals": ["States.ALL"],
-          "IntervalSeconds": 2,
+          "IntervalSeconds": 1,
           "MaxAttempts": 3,
           "BackoffRate": 2
         }
       ],
-      "Next": "getItem_2"
+      "Next": "getItem_1"
     },
-    "getItem_2": {
+    "getItem_1": {
       "Type": "Task",
       "Resource": "arn:aws:states:::aws-sdk:dynamodb:getItem",
-      "Parameters": {
-        "TableName.$": "$.TableName",
-        "Key.$": "$.Key"
+      "Arguments": {
+        "TableName": "{% $states.input.TableName %}",
+        "Key": "{% $states.input.Key %}"
       },
-      "ResultPath": "$.getItem_2Result",
+      "Output": "{% $merge([$states.input, {\"getItem_1Result\": $states.result}]) %}",
       "Retry": [
         {
           "ErrorEquals": ["States.ALL"],
-          "IntervalSeconds": 2,
+          "IntervalSeconds": 1,
           "MaxAttempts": 3,
           "BackoffRate": 2
         }
@@ -292,7 +294,8 @@ statelyはStep Functionsの制約に合わせて設計されているため、�
 
 ### パラメータの制約
 
-- パラメータは `{"Key.$": "$.Key"}` 形式（JSONPath）で生成されます
+- 生成するASLは `QueryLanguage: "JSONata"` を使用します
+- 動的なパラメータは `{"Key": "{% $states.input.Key %}"}` 形式で生成されます
 - 複雑な式や計算はサポートされていません
 - リテラル値は直接埋め込まれます
 - `fetch` は `fetch(url)` と `fetch(url, { method, headers, body })` の基本形をサポートします
