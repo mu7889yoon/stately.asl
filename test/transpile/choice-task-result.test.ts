@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { analyze, transpile } from "../../dist/index.js";
-import type { ASLChoiceState } from "../../dist/index.js";
+import { analyze, transpile } from "../../src/index.js";
+import type { ASLChoiceState } from "../../src/index.js";
 
 function choicesOf(states: Record<string, unknown>): ASLChoiceState[] {
   return Object.values(states).filter(
@@ -28,8 +28,8 @@ describe("Choice conditions using Task results", () => {
       "{% ($not($exists($states.input.getItem_1Result.Item)) or $states.input.getItem_1Result.Item = null) %}",
       '{% $not(($exists($states.input.getItem_1Result.Item.status.S) and $states.input.getItem_1Result.Item.status.S = "BLOCKED")) %}',
       '{% ($exists($states.input.getItem_1Result.Item.code.N) ? $string($states.input.getItem_1Result.Item.code.N) : "undefined") = "42" %}',
-      '{% (($not($exists($states.input.getItem_1Result.Item.left.S)) and $not($exists($states.input.getItem_1Result.Item.right.S))) or ($exists($states.input.getItem_1Result.Item.left.S) and $exists($states.input.getItem_1Result.Item.right.S) and $states.input.getItem_1Result.Item.left.S = $states.input.getItem_1Result.Item.right.S)) %}',
-      '{% (($exists($states.input.getItem_1Result.Item.left.S) and $not($exists($states.input.getItem_1Result.Item.right.S))) or ($not($exists($states.input.getItem_1Result.Item.left.S)) and $exists($states.input.getItem_1Result.Item.right.S)) or ($exists($states.input.getItem_1Result.Item.left.S) and $exists($states.input.getItem_1Result.Item.right.S) and $states.input.getItem_1Result.Item.left.S != $states.input.getItem_1Result.Item.right.S)) %}',
+      "{% (($not($exists($states.input.getItem_1Result.Item.left.S)) and $not($exists($states.input.getItem_1Result.Item.right.S))) or ($exists($states.input.getItem_1Result.Item.left.S) and $exists($states.input.getItem_1Result.Item.right.S) and $states.input.getItem_1Result.Item.left.S = $states.input.getItem_1Result.Item.right.S)) %}",
+      "{% (($exists($states.input.getItem_1Result.Item.left.S) and $not($exists($states.input.getItem_1Result.Item.right.S))) or ($not($exists($states.input.getItem_1Result.Item.left.S)) and $exists($states.input.getItem_1Result.Item.right.S)) or ($exists($states.input.getItem_1Result.Item.left.S) and $exists($states.input.getItem_1Result.Item.right.S) and $states.input.getItem_1Result.Item.left.S != $states.input.getItem_1Result.Item.right.S)) %}",
     ]);
   });
 
@@ -62,8 +62,7 @@ describe("Choice conditions using Task results", () => {
     });
     expect(states.Map_1).toMatchObject({
       Type: "Map",
-      Output:
-        '{% $merge([$states.input, {"Map_1Result": $states.result}]) %}',
+      Output: '{% $merge([$states.input, {"Map_1Result": $states.result}]) %}',
       Next: "Choice_1",
     });
 

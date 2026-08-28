@@ -6,6 +6,7 @@ import type {
   CFGMap,
   CFGTry,
   CFGChoice,
+  CFGReturn,
   ChoiceExpression,
   ChoiceReferenceExpression,
   IR,
@@ -41,10 +42,13 @@ function canHaveNext(
 function findTerminalStateIds(
   ir: IR,
   allStates: Record<string, IRState>,
+  ctx: IRBuildContext,
 ): string[] {
   return Object.keys(ir.states).filter((id) => {
     const state = allStates[id];
-    if (!state || !canHaveNext(state)) return false;
+    if (!state || !canHaveNext(state) || ctx.terminalStateIds.has(id)) {
+      return false;
+    }
     const s = state as IRTask | IRParallel | IRMap | IRPass | IRWait;
     return s.end === true && !s.next;
   });
@@ -70,6 +74,7 @@ interface IRBuildContext {
   idGen: IdGenerator;
   includeRetry: boolean;
   resultVariables: Map<string, string>;
+  terminalStateIds: Set<string>;
 }
 
 interface ConvertedNode {
@@ -103,16 +108,28 @@ function parseLiteral(source: string): unknown | undefined {
   return undefined;
 }
 
-function valueToJsonata(value: unknown): unknown {
+function sourceReferenceToJsonata(source: string, ctx: IRBuildContext): string {
+  if (source.endsWith(".length")) {
+    return `$count(${sourceReferenceToJsonata(source.slice(0, -7), ctx)})`;
+  }
+
+  const rootMatch = /^([A-Za-z_$][A-Za-z0-9_$]*)(.*)$/.exec(source);
+  if (!rootMatch) return inputReference(source);
+  const [, sourceRoot, suffix] = rootMatch;
+  const root = ctx.resultVariables.get(sourceRoot) ?? sourceRoot;
+  return `$states.input${jsonataProperty(root)}${suffix}`;
+}
+
+function valueToJsonata(value: unknown, ctx: IRBuildContext): unknown {
   if (Array.isArray(value)) {
-    return value.map(valueToJsonata);
+    return value.map((item) => valueToJsonata(item, ctx));
   }
 
   if (typeof value === "object" && value !== null) {
     return Object.fromEntries(
       Object.entries(value).map(([key, nested]) => [
         key,
-        valueToJsonata(nested),
+        valueToJsonata(nested, ctx),
       ]),
     );
   }
@@ -122,12 +139,17 @@ function valueToJsonata(value: unknown): unknown {
   }
 
   const literal = parseLiteral(value);
-  return literal !== undefined ? literal : jsonata(inputReference(value));
+  return literal !== undefined
+    ? literal
+    : jsonata(sourceReferenceToJsonata(value, ctx));
 }
 
 /** Convert CFG parameters to JSONata Arguments. */
-function paramsToJsonata(params: Record<string, unknown>): JsonExpr {
-  return valueToJsonata(params);
+function paramsToJsonata(
+  params: Record<string, unknown>,
+  ctx: IRBuildContext,
+): JsonExpr {
+  return valueToJsonata(params, ctx);
 }
 
 function mergedResultOutput(field: string, resultExpression: string): string {
@@ -344,7 +366,7 @@ function taskToIR(task: CFGTask, ctx: IRBuildContext): IRTask {
     id,
     service: task.service,
     operation: task.operation,
-    arguments: paramsToJsonata(task.params),
+    arguments: paramsToJsonata(task.params, ctx),
     output:
       task.outputMode === "responseBody"
         ? jsonata("$states.result.ResponseBody")
@@ -353,6 +375,11 @@ function taskToIR(task: CFGTask, ctx: IRBuildContext): IRTask {
 
   if (task.resultVariable && task.outputMode !== "responseBody") {
     ctx.resultVariables.set(task.resultVariable, resultField);
+  }
+
+  if (task.terminal) {
+    irTask.end = true;
+    ctx.terminalStateIds.add(id);
   }
 
   if (ctx.includeRetry) {
@@ -379,6 +406,10 @@ function parallelToIR(parallel: CFGParallel, ctx: IRBuildContext): IRParallel {
     sequenceToIR(branch, childContext(ctx)),
   );
 
+  if (parallel.resultVariable) {
+    ctx.resultVariables.set(parallel.resultVariable, `${id}Result`);
+  }
+
   return {
     kind: "Parallel",
     id,
@@ -395,22 +426,26 @@ function mapToIR(map: CFGMap, ctx: IRBuildContext): IRMap {
 
   const iterator = sequenceToIR(map.iterator, childContext(ctx));
 
+  if (map.resultVariable) {
+    ctx.resultVariables.set(map.resultVariable, `${id}Result`);
+  }
+
   return {
     kind: "Map",
     id,
-    items: jsonata(inputReference(map.itemsExpression)),
+    items: jsonata(sourceReferenceToJsonata(map.itemsExpression, ctx)),
     itemSelector: map.itemVariable
       ? mergedResultOutput(map.itemVariable, "$states.context.Map.Item.Value")
       : undefined,
     itemProcessor: iterator,
     output: mergedResultOutput(`${id}Result`, "$states.result"),
+    maxConcurrency: map.maxConcurrency,
   };
 }
 
 /**
  * Convert a CFGTry to IR states with Catch configuration.
- * Always appends a convergence Pass state so both the success path and
- * the catch path land on a single exit point.
+ * Adds a convergence Pass only when at least one path continues.
  */
 function tryToIR(
   tryNode: CFGTry,
@@ -425,21 +460,7 @@ function tryToIR(
     states[stateId] = state;
   }
 
-  // Convergence Pass: both success and catch paths land here
-  const convergenceId = ctx.idGen.generate("Pass");
-  const convergenceState: IRPass = {
-    kind: "Pass",
-    id: convergenceId,
-    end: true,
-  };
-  states[convergenceId] = convergenceState;
-
-  // Wire try-success terminal states → convergence
-  for (const termId of findTerminalStateIds(tryIR, states)) {
-    const s = states[termId] as IRTask | IRParallel | IRMap | IRPass | IRWait;
-    s.end = false;
-    s.next = convergenceId;
-  }
+  const tryExits = findTerminalStateIds(tryIR, states, ctx);
 
   // If there's a catch block, add catch handling
   if (tryNode.catchBlock && tryNode.catchBlock.nodes.length > 0) {
@@ -471,28 +492,38 @@ function tryToIR(
       }
     }
 
-    // Wire catch terminal states → convergence
-    for (const termId of findTerminalStateIds(catchIR, states)) {
+    const catchExits = findTerminalStateIds(catchIR, states, ctx);
+    const allIds = [
+      ...Object.keys(tryIR.states),
+      ...Object.keys(catchIR.states),
+    ];
+
+    if (tryExits.length === 0 && catchExits.length === 0) {
+      return allIds;
+    }
+
+    const convergenceId = ctx.idGen.generate("Pass");
+    states[convergenceId] = {
+      kind: "Pass",
+      id: convergenceId,
+      end: true,
+    };
+
+    for (const termId of [...tryExits, ...catchExits]) {
       const s = states[termId] as IRTask | IRParallel | IRMap | IRPass | IRWait;
       s.end = false;
       s.next = convergenceId;
     }
 
-    // Return all state IDs; convergenceId is last (= exit point)
-    return [
-      ...Object.keys(tryIR.states),
-      ...Object.keys(catchIR.states),
-      convergenceId,
-    ];
+    return [...allIds, convergenceId];
   }
 
-  return [...Object.keys(tryIR.states), convergenceId];
+  return Object.keys(tryIR.states);
 }
 
 /**
  * Convert a CFGChoice to IRChoice.
- * A convergence Pass state is appended so subsequent statements can be
- * reached from both the then-branch and the else-branch.
+ * A convergence Pass is added only when a branch can continue.
  */
 function choiceToIR(
   choice: CFGChoice,
@@ -516,25 +547,21 @@ function choiceToIR(
     }
   }
 
-  // Convergence Pass: both branches land here so the next node can follow
-  const convergenceId = ctx.idGen.generate("Pass");
-  const convergenceState: IRPass = {
-    kind: "Pass",
-    id: convergenceId,
-    end: true,
-  };
-  states[convergenceId] = convergenceState;
+  const thenExits = findTerminalStateIds(thenIR, states, ctx);
+  const elseExits = elseIR ? findTerminalStateIds(elseIR, states, ctx) : [];
+  const needsConvergence =
+    !elseIR || thenExits.length > 0 || elseExits.length > 0;
+  const convergenceId = needsConvergence
+    ? ctx.idGen.generate("Pass")
+    : undefined;
 
-  // Wire then-branch terminal states → convergence
-  for (const termId of findTerminalStateIds(thenIR, states)) {
-    const s = states[termId] as IRTask | IRParallel | IRMap | IRPass | IRWait;
-    s.end = false;
-    s.next = convergenceId;
-  }
-
-  // Wire else-branch terminal states → convergence
-  if (elseIR) {
-    for (const termId of findTerminalStateIds(elseIR, states)) {
+  if (convergenceId) {
+    states[convergenceId] = {
+      kind: "Pass",
+      id: convergenceId,
+      end: true,
+    };
+    for (const termId of [...thenExits, ...elseExits]) {
       const s = states[termId] as IRTask | IRParallel | IRMap | IRPass | IRWait;
       s.end = false;
       s.next = convergenceId;
@@ -561,7 +588,7 @@ function choiceToIR(
   if (elseIR) {
     allIds.push(...Object.keys(elseIR.states));
   }
-  allIds.push(convergenceId);
+  if (convergenceId) allIds.push(convergenceId);
 
   return { choiceId: id, stateIds: allIds };
 }
@@ -644,6 +671,22 @@ function nodeToIR(
       return [id];
     }
 
+    case "Return": {
+      const returnNode = node as CFGReturn;
+      const id = ctx.idGen.generate("Pass");
+      states[id] = {
+        kind: "Pass",
+        id,
+        output:
+          returnNode.value === undefined
+            ? undefined
+            : valueToJsonata(returnNode.value, ctx),
+        end: true,
+      };
+      ctx.terminalStateIds.add(id);
+      return [id];
+    }
+
     default:
       return [];
   }
@@ -661,6 +704,7 @@ export function sequenceToIR(
     idGen: new IdGenerator(),
     includeRetry: false,
     resultVariables: new Map(),
+    terminalStateIds: new Set(),
   };
 
   const states: Record<string, IRState> = existingStates ?? {};
@@ -684,7 +728,11 @@ export function sequenceToIR(
     const nextEntry = convertedNodes[i + 1].entry;
     const state = states[currentExit];
 
-    if (state && canHaveNext(state)) {
+    if (
+      state &&
+      canHaveNext(state) &&
+      !context.terminalStateIds.has(currentExit)
+    ) {
       (state as IRTask | IRParallel | IRMap | IRPass | IRWait).next = nextEntry;
     }
   }
@@ -693,7 +741,11 @@ export function sequenceToIR(
   if (convertedNodes.length > 0) {
     const lastExit = convertedNodes[convertedNodes.length - 1].exit;
     const lastState = states[lastExit];
-    if (lastState && canHaveNext(lastState)) {
+    if (
+      lastState &&
+      canHaveNext(lastState) &&
+      !context.terminalStateIds.has(lastExit)
+    ) {
       (lastState as IRTask | IRParallel | IRMap | IRPass | IRWait).end = true;
       delete (lastState as IRTask | IRParallel | IRMap | IRPass | IRWait).next;
     }
@@ -727,6 +779,7 @@ export function buildIR(cfg: CFGSequence, options?: BuildIROptions): IR {
     idGen: new IdGenerator(),
     includeRetry: options?.includeRetry ?? false,
     resultVariables: new Map(),
+    terminalStateIds: new Set(),
   };
 
   return sequenceToIR(cfg, ctx);

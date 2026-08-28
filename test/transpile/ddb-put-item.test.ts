@@ -1,9 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { transpile } from "../../dist/index.js";
+import { transpile } from "../../src/index.js";
 
 describe("transpile ddb-put-item", () => {
   it("produces ASL Task for PutItem", async () => {
-    const { asl } = await transpile({ entry: "test/fixtures/ddb-put-item.ts" });
+    const result = await transpile({ entry: "test/fixtures/ddb-put-item.ts" });
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics).toEqual([]);
+    const { asl } = result;
     expect(asl).toMatchSnapshot();
     expect(asl.QueryLanguage).toBe("JSONata");
     expect(asl.States).toBeTruthy();

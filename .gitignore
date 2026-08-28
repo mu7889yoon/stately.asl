@@ -4,5 +4,5 @@ node_modules/
 .yarn/build-state.yml
 .yarn/install-state.gz
 dist/
+coverage/
 .DS_Store
-

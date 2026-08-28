@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 import { Command } from "commander";
-import { writeFileSync, unlinkSync } from "fs";
+import { writeFileSync, mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { spawnSync } from "child_process";
+import { pathToFileURL } from "url";
 import { transpile, analyze } from "./transpile.js";
 import type { Diagnostic } from "./types.js";
 
@@ -39,7 +40,9 @@ function printDiagnostics(diagnostics: Diagnostic[]): void {
   }
 }
 
-async function runWithErrorHandling<T>(fn: () => Promise<T>): Promise<T | undefined> {
+async function runWithErrorHandling<T>(
+  fn: () => Promise<T>,
+): Promise<T | undefined> {
   try {
     return await fn();
   } catch (err) {
@@ -49,8 +52,14 @@ async function runWithErrorHandling<T>(fn: () => Promise<T>): Promise<T | undefi
   }
 }
 
-function validateWithAwsCli(json: string): void {
-  const tmpPath = join(tmpdir(), `stately-asl-${Date.now()}.json`);
+interface AwsValidationResponse {
+  result?: "OK" | "FAIL";
+  diagnostics?: Array<{ code?: string; message?: string; location?: string }>;
+}
+
+export function validateWithAwsCli(json: string): boolean {
+  const directory = mkdtempSync(join(tmpdir(), "stately-asl-"));
+  const tmpPath = join(directory, "definition.json");
   writeFileSync(tmpPath, json);
 
   try {
@@ -59,33 +68,66 @@ function validateWithAwsCli(json: string): void {
       "aws",
       [
         "stepfunctions",
-        "validate-state-machine",
+        "validate-state-machine-definition",
         "--definition",
         `file://${tmpPath}`,
+        "--severity",
+        "WARNING",
       ],
-      { stdio: "inherit" }
+      { encoding: "utf8" },
     );
 
     if (res.error) {
       console.error(
-        colors.red("AWS CLI の実行に失敗しました。aws がインストール済みか確認してください。")
+        colors.red(
+          "AWS CLI の実行に失敗しました。aws がインストール済みか確認してください。",
+        ),
       );
       process.exitCode = 1;
+      return false;
     } else if (res.status !== 0) {
+      if (res.stderr) console.error(res.stderr.trim());
       process.exitCode = res.status ?? 1;
+      return false;
+    }
+
+    let response: AwsValidationResponse;
+    try {
+      response = JSON.parse(res.stdout) as AwsValidationResponse;
+    } catch {
+      console.error(colors.red("AWS CLIの検証結果を解析できませんでした。"));
+      process.exitCode = 1;
+      return false;
+    }
+
+    if (response.result !== "OK") {
+      console.error(colors.red("✖ State machine validation failed:"));
+      for (const diagnostic of response.diagnostics ?? []) {
+        const location = diagnostic.location ? `${diagnostic.location}: ` : "";
+        console.error(
+          `  ${location}${diagnostic.code ?? "ERROR"}: ${diagnostic.message ?? ""}`,
+        );
+      }
+      process.exitCode = 1;
+      return false;
     } else {
+      for (const diagnostic of response.diagnostics ?? []) {
+        const location = diagnostic.location ? `${diagnostic.location}: ` : "";
+        console.error(
+          colors.yellow(
+            `⚠ ${location}${diagnostic.code ?? "WARNING"}: ${diagnostic.message ?? ""}`,
+          ),
+        );
+      }
       console.error(colors.green("✔ Validation successful!"));
+      return true;
     }
   } finally {
-    try {
-      unlinkSync(tmpPath);
-    } catch {
-      // Ignore cleanup errors
-    }
+    rmSync(directory, { recursive: true, force: true });
   }
 }
 
-const program = new Command();
+export const program = new Command();
 
 program
   .name("stately")
@@ -97,15 +139,28 @@ program
   .description("Analyze a TypeScript file for Step Functions compatibility")
   .argument("<entry>", "TypeScript entry file")
   .option("-f, --function <name>", "Target function name")
-  .action(async (entry: string, opts: { function?: string }) => {
-    await runWithErrorHandling(async () => {
-      const result = await analyze({ entry, functionName: opts.function });
-      console.log(JSON.stringify(result, null, 2));
-      if (!result.ok) {
-        process.exitCode = 1;
-      }
-    });
-  });
+  .option(
+    "--http-connection-arn <arn>",
+    "EventBridge Connection ARN for HTTP Tasks",
+  )
+  .action(
+    async (
+      entry: string,
+      opts: { function?: string; httpConnectionArn?: string },
+    ) => {
+      await runWithErrorHandling(async () => {
+        const result = await analyze({
+          entry,
+          functionName: opts.function,
+          httpConnectionArn: opts.httpConnectionArn,
+        });
+        console.log(JSON.stringify(result, null, 2));
+        if (!result.ok) {
+          process.exitCode = 1;
+        }
+      });
+    },
+  );
 
 program
   .command("transpile")
@@ -115,8 +170,16 @@ program
   .option("-f, --function <name>", "Target function name")
   .option("-p, --pretty", "Pretty print JSON output", false)
   .option("--no-retry", "Disable default retry configuration")
-  .option("--validate", "Validate with AWS CLI stepfunctions validate-state-machine", false)
+  .option(
+    "--validate",
+    "Validate with AWS CLI stepfunctions validate-state-machine-definition",
+    false,
+  )
   .option("--ir", "Output IR instead of ASL", false)
+  .option(
+    "--http-connection-arn <arn>",
+    "EventBridge Connection ARN for HTTP Tasks",
+  )
   .action(
     async (
       entry: string,
@@ -127,7 +190,8 @@ program
         retry?: boolean;
         validate?: boolean;
         ir?: boolean;
-      }
+        httpConnectionArn?: string;
+      },
     ) => {
       await runWithErrorHandling(async () => {
         const result = await transpile({
@@ -135,6 +199,7 @@ program
           functionName: opts.function,
           includeRetry: opts.retry !== false,
           pretty: opts.pretty,
+          httpConnectionArn: opts.httpConnectionArn,
         });
 
         // Print diagnostics
@@ -160,13 +225,22 @@ program
         // Validate with AWS CLI if requested
         if (opts.validate) {
           if (opts.ir) {
-            console.error(colors.yellow("⚠ IR モード指定時は --validate はスキップされます"));
+            console.error(
+              colors.yellow(
+                "⚠ IR モード指定時は --validate はスキップされます",
+              ),
+            );
           } else {
             validateWithAwsCli(json);
           }
         }
       });
-    }
+    },
   );
 
-program.parseAsync();
+if (
+  process.argv[1] &&
+  pathToFileURL(process.argv[1]).href === import.meta.url
+) {
+  program.parseAsync();
+}

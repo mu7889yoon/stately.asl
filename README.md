@@ -64,18 +64,23 @@ stately transpile handler.ts --out workflow.asl.json --pretty
 
 # AWS CLIで生成されたASLを検証
 stately transpile handler.ts --pretty --validate
+
+# HTTP Taskを含む場合はEventBridge Connection ARNを指定
+stately transpile handler.ts \
+  --http-connection-arn arn:aws:events:ap-northeast-1:123456789012:connection/example/id
 ```
 
 ### CLIオプション
 
-| オプション              | 説明                                   |
-| ----------------------- | -------------------------------------- |
-| `-o, --out <path>`      | 出力ファイルパス                       |
-| `-f, --function <name>` | ターゲット関数名（複数関数がある場合） |
-| `-p, --pretty`          | JSONを整形出力                         |
-| `--no-retry`            | デフォルトのRetry設定を無効化          |
-| `--validate`            | AWS CLIでASLを検証（aws CLIが必要）    |
-| `--ir`                  | ASLの代わりに中間表現（IR）を出力      |
+| オプション                    | 説明                                          |
+| ----------------------------- | --------------------------------------------- |
+| `-o, --out <path>`            | 出力ファイルパス                              |
+| `-f, --function <name>`       | ターゲット関数名（複数関数がある場合）        |
+| `-p, --pretty`                | JSONを整形出力                                |
+| `--no-retry`                  | デフォルトのRetry設定を無効化                 |
+| `--validate`                  | AWS CLIでASLを検証（aws CLIが必要）           |
+| `--ir`                        | ASLの代わりに中間表現（IR）を出力             |
+| `--http-connection-arn <arn>` | HTTP Taskで使用するEventBridge Connection ARN |
 
 ### 解析コマンド
 
@@ -267,6 +272,7 @@ const result = await transpile({
   entry: "src/handler.ts", // 入力ファイルパス
   functionName: "handler", // ターゲット関数名（オプション）
   includeRetry: true, // Retry設定を含める（デフォルト: true）
+  httpConnectionArn: process.env.HTTP_CONNECTION_ARN, // HTTP Task使用時は必須
 });
 
 // 結果
@@ -333,7 +339,13 @@ statelyはStep Functionsの制約に合わせて設計されているため、�
 - Task結果の分割代入、ローカル変数への再代入、分岐内で宣言した変数の分岐外参照はサポートされていません
 - リテラル値は直接埋め込まれます
 - `fetch` は `fetch(url)` と `fetch(url, { method, headers, body })` の基本形をサポートします
+- `fetch` / `https` を変換する場合は`httpConnectionArn`またはCLIの`--http-connection-arn`が必須です
 - `fetch(...).json()` は `return await (await fetch(...)).json()` のような終端の直結形のみサポートします
+
+### サンプルについて
+
+`examples/01-simple-dynamodb.ts`から`examples/04-error-handling.ts`は変換可能な例です。
+`examples/05-etl.ts`は、任意の文字列処理や通常の`for`文など、未対応構文に対する診断例として残しています。
 
 ### サポート外のAWSサービス
 

@@ -125,7 +125,16 @@ function parseHttpMethod(value: unknown, fallback = "GET"): string {
 
 function isFetchCall(call: CallExpression): boolean {
   const expr = unwrapParens(call.getExpression());
-  return Node.isIdentifier(expr) && expr.getText() === "fetch";
+  if (!Node.isIdentifier(expr) || expr.getText() !== "fetch") {
+    return false;
+  }
+
+  return !expr
+    .getSymbol()
+    ?.getDeclarations()
+    .some(
+      (declaration) => declaration.getSourceFile() === call.getSourceFile(),
+    );
 }
 
 function getFetchInitObject(
@@ -231,6 +240,17 @@ function extractArrayParams(arr: ArrayLiteralExpression): unknown[] {
   return result;
 }
 
+export function extractExpressionValue(node: Node): unknown {
+  const current = unwrapParens(node);
+  if (Node.isObjectLiteralExpression(current)) {
+    return extractObjectParams(current);
+  }
+  if (Node.isArrayLiteralExpression(current)) {
+    return extractArrayParams(current);
+  }
+  return current.getText();
+}
+
 /**
  * Extracts service name from AWS SDK module specifier.
  * @example
@@ -246,15 +266,34 @@ function extractServiceFromModule(moduleSpecifier: string): string | undefined {
  * Builds a map of command names to service names by analyzing imports.
  * Caches the result per source file.
  */
-const commandToServiceCache = new WeakMap<SourceFile, Map<string, string>>();
+interface ImportedCommand {
+  service: string;
+  commandName: string;
+}
 
-function buildCommandToServiceMap(sf: SourceFile): Map<string, string> {
+const commandToServiceCache = new WeakMap<
+  SourceFile,
+  Map<string, ImportedCommand>
+>();
+interface ImportedClient {
+  service: string;
+  clientName: string;
+}
+
+const clientToServiceCache = new WeakMap<
+  SourceFile,
+  Map<string, ImportedClient>
+>();
+
+function buildCommandToServiceMap(
+  sf: SourceFile,
+): Map<string, ImportedCommand> {
   const cached = commandToServiceCache.get(sf);
   if (cached) {
     return cached;
   }
 
-  const map = new Map<string, string>();
+  const map = new Map<string, ImportedCommand>();
 
   for (const importDecl of sf.getImportDeclarations()) {
     const moduleSpecifier = importDecl.getModuleSpecifierValue();
@@ -268,15 +307,93 @@ function buildCommandToServiceMap(sf: SourceFile): Map<string, string> {
     const namedImports = importDecl.getNamedImports();
     for (const namedImport of namedImports) {
       const name = namedImport.getName();
+      const localName = namedImport.getAliasNode()?.getText() ?? name;
       // Only map Command classes
       if (name.endsWith("Command")) {
-        map.set(name, serviceName);
+        map.set(localName, { service: serviceName, commandName: name });
       }
     }
   }
 
   commandToServiceCache.set(sf, map);
   return map;
+}
+
+function buildClientToServiceMap(sf: SourceFile): Map<string, ImportedClient> {
+  const cached = clientToServiceCache.get(sf);
+  if (cached) return cached;
+
+  const map = new Map<string, ImportedClient>();
+  for (const importDecl of sf.getImportDeclarations()) {
+    const serviceName = extractServiceFromModule(
+      importDecl.getModuleSpecifierValue(),
+    );
+    if (!serviceName) continue;
+
+    for (const namedImport of importDecl.getNamedImports()) {
+      const name = namedImport.getName();
+      if (!name.endsWith("Client")) continue;
+      map.set(namedImport.getAliasNode()?.getText() ?? name, {
+        service: serviceName,
+        clientName: name,
+      });
+    }
+  }
+  clientToServiceCache.set(sf, map);
+  return map;
+}
+
+function getSdkClientService(
+  call: CallExpression,
+  registry: PluginRegistry,
+): string | undefined {
+  const expression = call.getExpression();
+  if (!Node.isPropertyAccessExpression(expression)) return undefined;
+
+  const receiver = unwrapParens(expression.getExpression());
+  const initializer = Node.isIdentifier(receiver)
+    ? resolveIdentifierInitializer(receiver)
+    : receiver;
+  if (!initializer || !Node.isNewExpression(initializer)) return undefined;
+
+  const clientName = initializer.getExpression().getText();
+  const importedClient = buildClientToServiceMap(call.getSourceFile()).get(
+    clientName,
+  );
+  if (!importedClient) return undefined;
+  return (
+    registry.getByClientName(importedClient.clientName)?.serviceName ??
+    importedClient.service
+  );
+}
+
+function getSdkCallDiagnostic(
+  call: CallExpression,
+  registry: PluginRegistry,
+): string | undefined {
+  const expression = call.getExpression();
+  if (
+    !Node.isPropertyAccessExpression(expression) ||
+    expression.getName() !== "send"
+  ) {
+    return undefined;
+  }
+
+  const command = call.getArguments()[0];
+  if (!command || !Node.isNewExpression(command)) return undefined;
+  const importedCommand = buildCommandToServiceMap(call.getSourceFile()).get(
+    command.getExpression().getText(),
+  );
+  if (!importedCommand) return undefined;
+
+  const clientService = getSdkClientService(call, registry);
+  if (!clientService) {
+    return "AWS SDK Commandの呼び出し元クライアントを解決できません";
+  }
+  if (clientService !== importedCommand.service) {
+    return `AWS SDKクライアントとCommandのサービスが一致しません: ${clientService} / ${importedCommand.service}`;
+  }
+  return undefined;
 }
 
 /**
@@ -310,17 +427,20 @@ export function parseSdkCall(
 
   const newExpr = firstArg as NewExpression;
   const commandExpr = newExpr.getExpression();
-  const commandName = commandExpr.getText();
+  const localCommandName = commandExpr.getText();
 
   // Get the source file and build command-to-service map
   const sf = call.getSourceFile();
   const commandToService = buildCommandToServiceMap(sf);
 
   // Find the service for this command
-  const serviceName = commandToService.get(commandName);
-  if (!serviceName) {
+  const importedCommand = commandToService.get(localCommandName);
+  if (!importedCommand) {
     return undefined;
   }
+  const { service: serviceName, commandName } = importedCommand;
+  const clientService = getSdkClientService(call, registry);
+  if (!clientService || clientService !== serviceName) return undefined;
 
   // Built-in/custom plugins can override service names and operation mapping.
   // Otherwise, fall back to the Step Functions generic AWS SDK integration ARN.
@@ -350,6 +470,20 @@ export interface ParsedHttpCall {
   sourceText: string;
 }
 
+function isHttpsImport(identifier: string, sf: SourceFile): boolean {
+  return sf.getImportDeclarations().some((declaration) => {
+    if (
+      !["https", "node:https"].includes(declaration.getModuleSpecifierValue())
+    ) {
+      return false;
+    }
+    return (
+      declaration.getDefaultImport()?.getText() === identifier ||
+      declaration.getNamespaceImport()?.getText() === identifier
+    );
+  });
+}
+
 /**
  * Parses https.get() or https.request() calls
  */
@@ -365,7 +499,7 @@ export function parseHttpsCall(
   const methodName = expr.getName();
 
   // https.get() または https.request() を検出
-  if (objText !== "https") {
+  if (!isHttpsImport(objText, call.getSourceFile())) {
     return undefined;
   }
   if (methodName !== "get" && methodName !== "request") {
@@ -1043,6 +1177,48 @@ function inspectTaskInput(
   );
 }
 
+function inspectReturnValue(
+  node: Node,
+  addDiag: (level: Diagnostic["level"], message: string, node?: Node) => void,
+): void {
+  const current = unwrapParens(node);
+
+  if (isLiteralExpression(current) || isJsonPathExpression(current)) {
+    return;
+  }
+
+  if (Node.isObjectLiteralExpression(current)) {
+    for (const property of current.getProperties()) {
+      if (Node.isPropertyAssignment(property)) {
+        const initializer = property.getInitializer();
+        if (initializer) inspectReturnValue(initializer, addDiag);
+      } else if (Node.isShorthandPropertyAssignment(property)) {
+        continue;
+      } else {
+        addDiag(
+          "error",
+          `未対応のreturnプロパティです: ${property.getKindName()}`,
+          property,
+        );
+      }
+    }
+    return;
+  }
+
+  if (Node.isArrayLiteralExpression(current)) {
+    for (const element of current.getElements()) {
+      inspectReturnValue(element, addDiag);
+    }
+    return;
+  }
+
+  addDiag(
+    "error",
+    `未対応のreturn式です: ${getUnsupportedExpressionMessage(current as Expression)}`,
+    current,
+  );
+}
+
 function inspectTaskCallInputs(
   call: CallExpression,
   registry: PluginRegistry,
@@ -1148,6 +1324,12 @@ function detectUnsupportedSyntax(
         return true;
       }
 
+      const sdkDiagnostic = getSdkCallDiagnostic(inner, registry);
+      if (sdkDiagnostic) {
+        addDiag("error", sdkDiagnostic, inner);
+        return false;
+      }
+
       if (
         isPromiseAll(inner) &&
         isSupportedPromiseAll(
@@ -1169,6 +1351,12 @@ function detectUnsupportedSyntax(
       if (isSupportedTaskCall(current, registry)) {
         inspectTaskCallInputs(current, registry, addDiag);
         return true;
+      }
+
+      const sdkDiagnostic = getSdkCallDiagnostic(current, registry);
+      if (sdkDiagnostic) {
+        addDiag("error", sdkDiagnostic, current);
+        return false;
       }
 
       if (
@@ -1334,7 +1522,7 @@ function detectUnsupportedSyntax(
         return;
       }
 
-      addDiag("error", "return 値の変換は未対応です", statement);
+      inspectReturnValue(expression, addDiag);
       return;
     }
 
@@ -1393,6 +1581,7 @@ export function runDetectors(
   sf: SourceFile,
   registry: PluginRegistry,
   functionName?: string,
+  httpConnectionArn?: string,
 ): { diagnostics: Diagnostic[]; metrics: DetectorMetrics } {
   const diagnostics: Diagnostic[] = [];
   const metrics: DetectorMetrics = {
@@ -1462,6 +1651,18 @@ export function runDetectors(
       const sdkCall = parseSdkCall(call, registry);
       if (sdkCall) {
         metrics.sdkCalls += 1;
+      }
+
+      if (
+        !httpConnectionArn &&
+        (parseHttpsCall(call) !== undefined ||
+          parseFetchCall(call) !== undefined)
+      ) {
+        addDiag(
+          "error",
+          "HTTP TaskにはEventBridge Connection ARNの指定が必要です",
+          call,
+        );
       }
 
       for (const message of getFetchInitDiagnostics(call)) {

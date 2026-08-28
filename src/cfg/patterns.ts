@@ -15,6 +15,7 @@ import type {
   CFGMap,
   CFGTry,
   CFGChoice,
+  CFGReturn,
 } from "../types.js";
 import { PluginRegistry } from "../plugins/index.js";
 import {
@@ -26,6 +27,7 @@ import {
   parseHttpsCall,
   parseFetchCall,
   parseTerminalFetchJsonCall,
+  extractExpressionValue,
 } from "../parser/visitors.js";
 
 /**
@@ -34,6 +36,7 @@ import {
 export interface CFGBuildContext {
   registry: PluginRegistry;
   visitedNodes: Set<Node>;
+  httpConnectionArn?: string;
 }
 
 function buildTaskFromHttpCall(httpInfo: {
@@ -42,6 +45,7 @@ function buildTaskFromHttpCall(httpInfo: {
   headers?: unknown;
   body?: unknown;
   sourceText: string;
+  connectionArn?: string;
 }): CFGTask {
   const params: Record<string, unknown> = {
     ApiEndpoint: httpInfo.url,
@@ -54,6 +58,12 @@ function buildTaskFromHttpCall(httpInfo: {
 
   if (httpInfo.body !== undefined) {
     params.RequestBody = httpInfo.body;
+  }
+
+  if (httpInfo.connectionArn !== undefined) {
+    params.Authentication = {
+      ConnectionArn: JSON.stringify(httpInfo.connectionArn),
+    };
   }
 
   return {
@@ -69,7 +79,10 @@ function extractTaskFromCall(
   call: CallExpression,
   ctx: CFGBuildContext,
 ): CFGTask | undefined {
-  const httpInfo = parseHttpsCall(call) ?? parseFetchCall(call);
+  const parsedHttp = parseHttpsCall(call) ?? parseFetchCall(call);
+  const httpInfo = parsedHttp
+    ? { ...parsedHttp, connectionArn: ctx.httpConnectionArn }
+    : undefined;
   if (httpInfo) {
     return buildTaskFromHttpCall(httpInfo);
   }
@@ -88,7 +101,10 @@ function extractTaskFromCall(
   };
 }
 
-function extractTerminalFetchJsonTask(expr: Expression): CFGTask | undefined {
+function extractTerminalFetchJsonTask(
+  expr: Expression,
+  ctx: CFGBuildContext,
+): CFGTask | undefined {
   const call = Node.isCallExpression(expr)
     ? expr
     : Node.isAwaitExpression(expr) &&
@@ -105,8 +121,12 @@ function extractTerminalFetchJsonTask(expr: Expression): CFGTask | undefined {
     return undefined;
   }
 
-  const task = buildTaskFromHttpCall(httpInfo);
+  const task = buildTaskFromHttpCall({
+    ...httpInfo,
+    connectionArn: ctx.httpConnectionArn,
+  });
   task.outputMode = "responseBody";
+  task.terminal = true;
   return task;
 }
 
@@ -132,7 +152,10 @@ export function extractHttpTask(
   call: CallExpression,
   _ctx: CFGBuildContext,
 ): CFGTask | undefined {
-  const httpInfo = parseHttpsCall(call) ?? parseFetchCall(call);
+  const parsedHttp = parseHttpsCall(call) ?? parseFetchCall(call);
+  const httpInfo = parsedHttp
+    ? { ...parsedHttp, connectionArn: _ctx.httpConnectionArn }
+    : undefined;
   if (!httpInfo) {
     return undefined;
   }
@@ -189,12 +212,12 @@ export function extractParallel(
 }
 
 /**
- * Extract a Parallel from Promise.all(items.map(...)) pattern
+ * Extract a concurrent Map from Promise.all(items.map(...)) pattern
  */
-export function extractParallelFromMap(
+export function extractMapFromPromiseAll(
   call: CallExpression,
   ctx: CFGBuildContext,
-): CFGParallel | undefined {
+): CFGMap | undefined {
   if (!isPromiseAll(call)) {
     return undefined;
   }
@@ -246,9 +269,7 @@ export function extractParallelFromMap(
   const iteratorSeq: CFGSequence = { kind: "Sequence", nodes: [] };
 
   if (Node.isBlock(callbackBody)) {
-    for (const childStmt of callbackBody.getStatements()) {
-      processStatement(childStmt, iteratorSeq, ctx);
-    }
+    processStatements(callbackBody.getStatements(), iteratorSeq, ctx);
   } else {
     // Expression body (e.g. item => ddb.send(...)): processExpression handles the root call
     processExpression(callbackBody as Expression, iteratorSeq, ctx);
@@ -258,12 +279,16 @@ export function extractParallelFromMap(
     return undefined;
   }
 
-  // This is actually a Map pattern (parallel execution of mapped items)
-  // We'll treat Promise.all(items.map(...)) as Parallel with single branch
-  // that internally loops. In Step Functions, this becomes a Map state.
+  const callbackParameter =
+    Node.isArrowFunction(callback) || Node.isFunctionExpression(callback)
+      ? callback.getParameters()[0]?.getName()
+      : undefined;
+
   return {
-    kind: "Parallel",
-    branches: [iteratorSeq],
+    kind: "Map",
+    itemsExpression: mapExpr.getExpression().getText(),
+    itemVariable: callbackParameter,
+    iterator: iteratorSeq,
   };
 }
 
@@ -287,9 +312,7 @@ export function extractMap(
 
   // Process the loop body
   if (bodyBlock) {
-    for (const childStmt of bodyBlock.getStatements()) {
-      processStatement(childStmt, iteratorSeq, ctx);
-    }
+    processStatements(bodyBlock.getStatements(), iteratorSeq, ctx);
   } else {
     processStatement(body as Statement, iteratorSeq, ctx);
   }
@@ -303,6 +326,7 @@ export function extractMap(
     itemsExpression,
     itemVariable: parsed.variable,
     iterator: iteratorSeq,
+    maxConcurrency: 1,
   };
 }
 
@@ -319,9 +343,7 @@ export function extractTry(
   const trySeq: CFGSequence = { kind: "Sequence", nodes: [] };
 
   // Process try block
-  for (const childStmt of tryBlock.getStatements()) {
-    processStatement(childStmt, trySeq, ctx);
-  }
+  processStatements(tryBlock.getStatements(), trySeq, ctx);
 
   if (trySeq.nodes.length === 0) {
     return undefined;
@@ -337,9 +359,7 @@ export function extractTry(
     catchErrorName = varDecl?.getName();
 
     catchSeq = { kind: "Sequence", nodes: [] };
-    for (const childStmt of catchBlock.getStatements()) {
-      processStatement(childStmt, catchSeq, ctx);
-    }
+    processStatements(catchBlock.getStatements(), catchSeq, ctx);
 
     // If catch block is empty or just returns, we still need to track it
     if (catchSeq.nodes.length === 0) {
@@ -375,9 +395,7 @@ export function extractChoice(
   const thenSeq: CFGSequence = { kind: "Sequence", nodes: [] };
 
   if (Node.isBlock(thenStmt)) {
-    for (const childStmt of thenStmt.getStatements()) {
-      processStatement(childStmt, thenSeq, ctx);
-    }
+    processStatements(thenStmt.getStatements(), thenSeq, ctx);
   } else {
     processStatement(thenStmt as Statement, thenSeq, ctx);
   }
@@ -389,9 +407,7 @@ export function extractChoice(
   if (elseStmt) {
     elseSeq = { kind: "Sequence", nodes: [] };
     if (Node.isBlock(elseStmt)) {
-      for (const childStmt of elseStmt.getStatements()) {
-        processStatement(childStmt, elseSeq, ctx);
-      }
+      processStatements(elseStmt.getStatements(), elseSeq, ctx);
     } else if (Node.isIfStatement(elseStmt)) {
       // else if - recursively extract
       const nestedChoice = extractChoice(elseStmt as IfStatement, ctx);
@@ -414,6 +430,47 @@ export function extractChoice(
     thenBranch: thenSeq,
     elseBranch: elseSeq,
   };
+}
+
+export function sequenceTerminates(seq: CFGSequence): boolean {
+  const last = seq.nodes.at(-1);
+  if (!last) return false;
+
+  if (
+    last.kind === "Return" ||
+    last.kind === "Fail" ||
+    last.kind === "Succeed"
+  ) {
+    return true;
+  }
+  if (last.kind === "Task" && last.terminal) return true;
+
+  if (last.kind === "Choice") {
+    return (
+      sequenceTerminates(last.thenBranch) &&
+      Boolean(last.elseBranch && sequenceTerminates(last.elseBranch))
+    );
+  }
+
+  if (last.kind === "Try") {
+    return (
+      sequenceTerminates(last.tryBlock) &&
+      Boolean(last.catchBlock && sequenceTerminates(last.catchBlock))
+    );
+  }
+
+  return false;
+}
+
+export function processStatements(
+  statements: Statement[],
+  seq: CFGSequence,
+  ctx: CFGBuildContext,
+): void {
+  for (const statement of statements) {
+    processStatement(statement, seq, ctx);
+    if (sequenceTerminates(seq)) break;
+  }
 }
 
 /**
@@ -469,13 +526,19 @@ export function processStatement(
   if (Node.isReturnStatement(stmt)) {
     const expr = stmt.getExpression();
     if (expr) {
-      const terminalFetchJson = extractTerminalFetchJsonTask(expr);
+      const terminalFetchJson = extractTerminalFetchJsonTask(expr, ctx);
       if (terminalFetchJson) {
         ctx.visitedNodes.add(expr);
         seq.nodes.push(terminalFetchJson);
       } else {
-        processExpression(expr, seq, ctx);
+        const returnNode: CFGReturn = {
+          kind: "Return",
+          value: extractExpressionValue(expr),
+        };
+        seq.nodes.push(returnNode);
       }
+    } else {
+      seq.nodes.push({ kind: "Return" });
     }
     return;
   }
@@ -491,7 +554,10 @@ export function processStatement(
         const addedNode = seq.nodes[nodeCount];
         if (
           seq.nodes.length === nodeCount + 1 &&
-          addedNode?.kind === "Task" &&
+          addedNode &&
+          (addedNode.kind === "Task" ||
+            addedNode.kind === "Parallel" ||
+            addedNode.kind === "Map") &&
           Node.isIdentifier(name)
         ) {
           addedNode.resultVariable = name.getText();
@@ -530,13 +596,11 @@ export function processExpression(
       }
 
       // Try map pattern
-      const parallelMap = extractParallelFromMap(inner as CallExpression, ctx);
-      if (parallelMap) {
+      const map = extractMapFromPromiseAll(inner as CallExpression, ctx);
+      if (map) {
         ctx.visitedNodes.add(expr);
         ctx.visitedNodes.add(inner);
-        // This is actually a parallel map, but we'll convert to Map
-        // since Promise.all(items.map(...)) is essentially parallel iteration
-        seq.nodes.push(parallelMap);
+        seq.nodes.push(map);
         return;
       }
     }
