@@ -141,8 +141,7 @@ program
         printDiagnostics(result.diagnostics);
 
         // Check for errors
-        const hasErrors = result.diagnostics.some((d) => d.level === "error");
-        if (hasErrors) {
+        if (!result.ok) {
           process.exitCode = 1;
           return;
         }

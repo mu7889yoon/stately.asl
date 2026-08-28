@@ -402,6 +402,7 @@ export interface TranspileOptions {
 }
 
 export interface TranspileResult {
+  ok: boolean;
   ir: IR;
   asl: ASLStateMachine;
   diagnostics: Diagnostic[];

@@ -452,9 +452,9 @@ export function processStatement(
 
   // Handle for...of
   if (Node.isForOfStatement(stmt)) {
-    ctx.visitedNodes.add(stmt);
     const mapNode = extractMap(stmt as ForOfStatement, ctx);
     if (mapNode) {
+      ctx.visitedNodes.add(stmt);
       seq.nodes.push(mapNode);
     }
     return;
@@ -462,9 +462,9 @@ export function processStatement(
 
   // Handle try...catch
   if (Node.isTryStatement(stmt)) {
-    ctx.visitedNodes.add(stmt);
     const tryNode = extractTry(stmt as TryStatement, ctx);
     if (tryNode) {
+      ctx.visitedNodes.add(stmt);
       seq.nodes.push(tryNode);
     }
     return;
@@ -472,9 +472,9 @@ export function processStatement(
 
   // Handle if...else
   if (Node.isIfStatement(stmt)) {
-    ctx.visitedNodes.add(stmt);
     const choiceNode = extractChoice(stmt as IfStatement, ctx);
     if (choiceNode) {
+      ctx.visitedNodes.add(stmt);
       seq.nodes.push(choiceNode);
     }
     return;
@@ -525,12 +525,11 @@ export function processExpression(
 
     // Check if inner is Promise.all
     if (Node.isCallExpression(inner) && isPromiseAll(inner as CallExpression)) {
-      ctx.visitedNodes.add(expr);
-      ctx.visitedNodes.add(inner);
-
       // Try direct array first
       const parallel = extractParallel(inner as CallExpression, ctx);
       if (parallel) {
+        ctx.visitedNodes.add(expr);
+        ctx.visitedNodes.add(inner);
         seq.nodes.push(parallel);
         return;
       }
@@ -538,6 +537,8 @@ export function processExpression(
       // Try map pattern
       const parallelMap = extractParallelFromMap(inner as CallExpression, ctx);
       if (parallelMap) {
+        ctx.visitedNodes.add(expr);
+        ctx.visitedNodes.add(inner);
         // This is actually a parallel map, but we'll convert to Map
         // since Promise.all(items.map(...)) is essentially parallel iteration
         seq.nodes.push(parallelMap);
@@ -556,9 +557,9 @@ export function processExpression(
 
   // Handle Promise.all without await (less common but valid)
   if (Node.isCallExpression(expr) && isPromiseAll(expr as CallExpression)) {
-    ctx.visitedNodes.add(expr);
     const parallel = extractParallel(expr as CallExpression, ctx);
     if (parallel) {
+      ctx.visitedNodes.add(expr);
       seq.nodes.push(parallel);
       return;
     }

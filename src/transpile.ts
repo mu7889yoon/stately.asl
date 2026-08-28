@@ -41,8 +41,9 @@ function runTranspile(options: TranspileOptions): TranspileResult {
   const { cfg } = buildCFG({ entry, functionName, registry });
   const ir = buildIR(cfg, { includeRetry });
   const asl = serializeToAsl(ir);
+  const ok = diagnostics.every((diagnostic) => diagnostic.level !== "error");
 
-  return { ir, asl, diagnostics };
+  return { ok, ir, asl, diagnostics };
 }
 
 /**

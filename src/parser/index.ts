@@ -27,7 +27,7 @@ export interface ParseOptions {
  * Parses a TypeScript file and returns the source file with diagnostics
  */
 export function parseFile(options: ParseOptions): ParseResult {
-  const { entry, registry = defaultRegistry } = options;
+  const { entry, functionName, registry = defaultRegistry } = options;
 
   const project = new Project({
     skipFileDependencyResolution: true,
@@ -38,7 +38,11 @@ export function parseFile(options: ParseOptions): ParseResult {
   });
 
   const sourceFile = project.addSourceFileAtPath(entry);
-  const { diagnostics, metrics } = runDetectors(sourceFile, registry);
+  const { diagnostics, metrics } = runDetectors(
+    sourceFile,
+    registry,
+    functionName
+  );
 
   return {
     sourceFile,
